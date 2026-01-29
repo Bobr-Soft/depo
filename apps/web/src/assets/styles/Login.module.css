@@ -1,0 +1,82 @@
+.loginContainer {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+
+  position: relative;
+  background-color: #06000f;
+  overflow: hidden;
+}
+
+
+.loginBox {
+  position: relative;
+  z-index: 1;
+  padding: 40px;
+  width: 100%;
+  max-width: 420px;
+  text-align: center;
+
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 16px;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+
+  color: #fff;
+  font-family: 'Segoe UI', sans-serif;
+  animation: fadeIn 1s ease-out;
+}
+
+.loginBox h1 {
+  margin-bottom: 8px;
+  font-size: 1.8rem;
+  font-weight: 600;
+}
+
+.loginBox p {
+  margin-bottom: 20px;
+  opacity: 0.85;
+}
+
+.loginBox button {
+  padding: 10px 20px;
+  font-size: 16px;
+  border: none;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #42a4f5, #2b64f3);
+  color: white;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.loginBox button:hover {
+  transform: scale(1.05);
+  box-shadow: 0 0 15px rgba(66, 164, 245, 0.6);
+}
+
+.errorMessage {
+  margin-top: 15px;
+  padding: 10px;
+  border-radius: 8px;
+  background: rgba(255, 77, 77, 0.15);
+  border: 1px solid rgba(255, 77, 77, 0.3);
+  color: #ffb3b3;
+  font-size: 0.9rem;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

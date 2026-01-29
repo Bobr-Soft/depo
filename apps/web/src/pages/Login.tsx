@@ -1,0 +1,91 @@
+import { useState } from 'react';
+import { useMsal } from '@azure/msal-react';
+import { loginRequest } from '../authConfig';
+import { api, setAuthToken } from '../services/api';
+import Plasma from '../components/Plasma';
+import styles from '../assets/styles/Login.module.css';
+
+
+
+interface LoginProps {
+  onLogin: (token: string, user: { name: string; email: string; image?: string }) => void;
+}
+
+export const Login = ({ onLogin }: LoginProps) => {
+  const { instance } = useMsal();
+  const [error, setError] = useState<string | null>(null);
+
+  const handleLogin = async () => {
+    try {
+      setError(null);
+      console.log('🔄 Starting Entra ID login...');
+      
+
+      const loginResponse = await instance.loginPopup({ 
+        ...loginRequest, 
+        prompt: 'login' 
+      });
+      console.log('Entra ID returned username:', loginResponse.account?.username);
+      console.log('Entra ID returned name:', loginResponse.account?.name);
+      
+      const email = loginResponse.account?.username;
+      if (!email) {
+        throw new Error('Email not found in Entra ID response');
+      }
+      const name = loginResponse.account?.name || email.split('@')[0];
+      const image = `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=0078D4&color=fff`;
+
+      console.log('✅ Entra ID login successful for:', email);
+      console.log('🔄 Validating with backend...');
+
+      const res = await api.post('/login', { email });
+      const { token } = res.data;
+      
+      console.log('✅ Backend validation successful');
+      setAuthToken(token);
+      
+      onLogin(token, { name, email, image });
+      
+    } catch (err: any) {
+      console.error('❌ Login error:', err);
+      
+      if (err.response?.status === 403) {
+        setError('Access denied: Your account is not authorized to access this system. Please contact your administrator.');
+      } else if (err.response?.status === 503) {
+        setError('System temporarily unavailable. Please try again later.');
+      } else {
+        setError(err.response?.data?.message || err.message || 'Login failed. Please try again.');
+      }
+    }
+  };
+
+  return (
+    <div className={styles.loginContainer}>
+      <div style={{ position: 'absolute', 
+        top: 0, 
+        left: 0, 
+        width: '100%', 
+        height: '100%', 
+        zIndex: 0 }}>
+        <Plasma 
+          color="#42a4f5" 
+          speed={1.7} 
+          direction="forward" 
+          scale={0.7} 
+          opacity={1}   
+          mouseInteractive={false} 
+        />
+      </div>
+
+      <div className={styles.loginBox}>
+        <h1>Leltár alkalmazás</h1>
+        <p>Bejelentkezés iskolai e-mail címmel</p>
+
+        <button onClick={handleLogin}>Bejelentkezés</button>
+        <p style={{ fontSize: '12px', marginTop: '10px', opacity: 0.7 }}>Secure Azure AD Authentication</p>
+
+        {error && <div className={styles.errorMessage}>{error}</div>}
+      </div>
+    </div>
+  );
+};
