@@ -1,0 +1,29 @@
+# Stale Issue/PR Bot Configuration
+# Automatically closes inactive issues and PRs
+
+daysUntilStale: 30
+daysUntilClose: 7
+
+exemptLabels:
+  - 'pinned'
+  - 'security'
+  - 'in-progress'
+  - 'help wanted'
+  - 'good first issue'
+
+exemptProjects: true
+exemptMilestones: true
+exemptAssignees: true
+
+staleLabel: stale
+
+markComment: >
+  This issue has been automatically marked as stale because it has not had
+  recent activity. It will be closed if no further activity occurs within 7 days.
+  If this issue is still relevant, please leave a comment or remove the stale label.
+
+closeComment: >
+  This issue has been automatically closed due to inactivity.
+  If you believe this was closed in error, please re-open it or create a new issue.
+
+limitPerRun: 30

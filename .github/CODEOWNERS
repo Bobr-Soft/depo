@@ -1,0 +1,24 @@
+# Code Owners
+# These owners will be automatically requested for review on PRs
+
+# Default owners for everything
+* @Bobr-Soft/developers
+
+# Web app
+/apps/web/ @Barnabas05
+
+# Mobile app
+/apps/mobile/ @TibeeTheOnly
+
+# API
+/apps/api/ @Barnabas05
+
+# Shared packages
+/packages/ @Bobr-Soft/developers
+
+# CI/CD and GitHub config
+/.github/ @Bobr-Soft/devops
+
+# Root configuration files
+/package.json @Bobr-Soft/developers
+/turbo.json @Bobr-Soft/developers
