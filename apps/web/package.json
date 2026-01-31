@@ -14,7 +14,7 @@
     "@azure/msal-react": "^3.0.20",
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",
-    "@mui/icons-material": "^7.3.4",
+    "@mui/icons-material": "^7.3.7",
     "@mui/material": "^7.3.4",
     "@toolpad/core": "^0.16.0",
     "axios": "^1.12.2",
