@@ -1,98 +1,128 @@
-import { Image } from 'expo-image';
-import { Platform, StyleSheet } from 'react-native';
-
-import { HelloWave } from '@/components/hello-wave';
-import ParallaxScrollView from '@/components/parallax-scroll-view';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Link } from 'expo-router';
+import { StyleSheet, ScrollView } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { View, Text, Card, Button } from '@/components';
+import { Spacing } from '@/constants';
 
 export default function HomeScreen() {
   return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-      headerImage={
-        <Image
-          source={require('@/assets/images/partial-react-logo.png')}
-          style={styles.reactLogo}
-        />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Welcome!</ThemedText>
-        <HelloWave />
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 1: Try it</ThemedText>
-        <ThemedText>
-          Edit <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> to see changes.
-          Press{' '}
-          <ThemedText type="defaultSemiBold">
-            {Platform.select({
-              ios: 'cmd + d',
-              android: 'cmd + m',
-              web: 'F12',
-            })}
-          </ThemedText>{' '}
-          to open developer tools.
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <Link href="/modal">
-          <Link.Trigger>
-            <ThemedText type="subtitle">Step 2: Explore</ThemedText>
-          </Link.Trigger>
-          <Link.Preview />
-          <Link.Menu>
-            <Link.MenuAction title="Action" icon="cube" onPress={() => alert('Action pressed')} />
-            <Link.MenuAction
-              title="Share"
-              icon="square.and.arrow.up"
-              onPress={() => alert('Share pressed')}
-            />
-            <Link.Menu title="More" icon="ellipsis">
-              <Link.MenuAction
-                title="Delete"
-                icon="trash"
-                destructive
-                onPress={() => alert('Delete pressed')}
-              />
-            </Link.Menu>
-          </Link.Menu>
-        </Link>
+    <View style={styles.container}>
+      <ScrollView contentContainerStyle={styles.scrollContent}>
+        <View style={styles.header}>
+          <Text variant="title">Welcome to Depo</Text>
+          <Text variant="body" style={styles.subtitle}>
+            Manage your inventory efficiently
+          </Text>
+        </View>
 
-        <ThemedText>
-          {`Tap the Explore tab to learn more about what's included in this starter app.`}
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 3: Get a fresh start</ThemedText>
-        <ThemedText>
-          {`When you're ready, run `}
-          <ThemedText type="defaultSemiBold">npm run reset-project</ThemedText> to get a fresh{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> directory. This will move the current{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> to{' '}
-          <ThemedText type="defaultSemiBold">app-example</ThemedText>.
-        </ThemedText>
-      </ThemedView>
-    </ParallaxScrollView>
+        <Card>
+          <Text variant="heading" style={styles.cardTitle}>
+            Quick Actions
+          </Text>
+          <View style={styles.buttonGroup}>
+            <Button title="Add Item" variant="primary" />
+            <Button title="Scan Barcode" variant="secondary" />
+          </View>
+        </Card>
+
+        <Card>
+          <Text variant="heading" style={styles.cardTitle}>
+            Overview
+          </Text>
+          <View style={styles.stats}>
+            <View style={styles.stat}>
+              <Text variant="title" weight="bold">
+                0
+              </Text>
+              <Text variant="caption">Total Items</Text>
+            </View>
+            <View style={styles.stat}>
+              <Text variant="title" weight="bold">
+                0
+              </Text>
+              <Text variant="caption">Categories</Text>
+            </View>
+            <View style={styles.stat}>
+              <Text variant="title" weight="bold">
+                0
+              </Text>
+              <Text variant="caption">Locations</Text>
+            </View>
+          </View>
+        </Card>
+      </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  titleContainer: {
+  container: {
+    flex: 1,
+  },
+  scrollContent: {
+    flexGrow: 1,
+    padding: Spacing.lg,
+    gap: Spacing.lg,
+  },
+  header: {
+    paddingVertical: Spacing.md,
+    gap: Spacing.xs,
+  },
+  subtitle: {
+    opacity: 0.6,
+    marginTop: Spacing.xs,
+  },
+  actionsRow: {
     flexDirection: 'row',
+    gap: Spacing.md,
+  },
+  actionButton: {
+    flex: 1,
+  },
+  sectionTitle: {
+    marginBottom: Spacing.lg,
+  },
+  statsGrid: {
+    flexDirection: 'row',
+    gap: Spacing.md,
+  },
+  statCard: {
+    flex: 1,
+    padding: Spacing.md,
+    borderRadius: 12,
     alignItems: 'center',
-    gap: 8,
+    gap: Spacing.xs,
   },
-  stepContainer: {
-    gap: 8,
-    marginBottom: 8,
+  statLabel: {
+    opacity: 0.7,
+    textAlign: 'center',
   },
-  reactLogo: {
-    height: 178,
-    width: 290,
-    bottom: 0,
-    left: 0,
-    position: 'absolute',
+  emptyState: {
+    alignItems: 'center',
+    paddingVertical: Spacing.xl,
+    gap: Spacing.xs,
+  },
+  emptyText: {
+    opacity: 0.5,
+  },
+  emptySubtext: {
+    opacity: 0.4,
+  },
+  cardTitle: {
+    marginBottom: Spacing.lg,
+  },
+  buttonGroup: {
+    flexDirection: 'row',
+    gap: Spacing.md,
+  },
+  stats: {
+    flexDirection: 'row',
+    gap: Spacing.md,
+  },
+  stat: {
+    flex: 1,
+    padding: Spacing.md,
+    borderRadius: 12,
+    alignItems: 'center',
+    gap: Spacing.xs,
   },
 });

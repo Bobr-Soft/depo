@@ -1,50 +1,138 @@
-# Welcome to your Expo app 👋
+# Depo Mobile App
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+A modern React Native inventory management app built with Expo Router.
 
-## Get started
+## 📁 Project Structure
 
-1. Install dependencies
-
-   ```bash
-   npm install
-   ```
-
-2. Start the app
-
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
-
-```bash
-npm run reset-project
+```
+apps/mobile/
+├── app/                    # File-based routing (Expo Router)
+│   ├── (tabs)/            # Tab navigation group
+│   │   ├── _layout.tsx    # Tab navigator configuration
+│   │   ├── index.tsx      # Home screen
+│   │   ├── items.tsx      # Items screen
+│   │   └── profile.tsx    # Profile screen
+│   └── _layout.tsx        # Root layout
+├── src/
+│   ├── components/        # Reusable components
+│   │   └── ui/           # UI components (Button, Card, Text, View)
+│   ├── constants/        # App constants and theme
+│   │   ├── theme.ts      # Colors, spacing, typography
+│   │   └── config.ts     # App configuration
+│   └── hooks/            # Custom React hooks
+│       ├── useColorScheme.ts
+│       └── useThemeColor.ts
+├── assets/               # Images, fonts, etc.
+└── app.json             # Expo configuration
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+## 🚀 Getting Started
 
-## Learn more
+### Prerequisites
+- Node.js 18+
+- Yarn package manager
+- Expo CLI
+- iOS Simulator (for iOS development) or Android Studio (for Android)
 
-To learn more about developing your project with Expo, look at the following resources:
+### Installation
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+```bash
+cd apps/mobile
+yarn install
+```
 
-## Join the community
+### Development
 
-Join our community of developers creating universal apps.
+```bash
+# Start the development server
+yarn start
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+# Run on iOS simulator
+yarn ios
+
+# Run on Android emulator
+yarn android
+
+# Run on web
+yarn web
+```
+
+## 🎨 Design System
+
+### Theme
+The app uses a comprehensive theme system with light and dark mode support:
+- **Colors**: Primary, secondary, background, text, etc.
+- **Spacing**: Consistent spacing scale (xs, sm, md, lg, xl, xxl)
+- **Typography**: Font sizes and weights
+- **Border Radius**: Consistent corner radius values
+
+### Components
+All UI components are theme-aware and support light/dark mode:
+- `<View>` - Themed container
+- `<Text>` - Themed text with variants (title, heading, body, caption)
+- `<Button>` - Button with variants (primary, secondary, outline)
+- `<Card>` - Card container component
+
+## 🧭 Navigation
+
+Using Expo Router's file-based routing with tab navigation:
+- **Home**: Dashboard with quick actions and overview
+- **Items**: Inventory items list
+- **Profile**: User profile and settings
+
+## 📝 Development Guidelines
+
+### Path Aliases
+Use `@/` alias for imports from `src/`:
+```typescript
+import { Button, Text } from '@/components';
+import { Colors, Spacing } from '@/constants';
+import { useColorScheme } from '@/hooks';
+```
+
+### Component Structure
+- Keep components small and focused
+- Use TypeScript for type safety
+- Export types alongside components
+- Use the theme system for styling
+
+### Styling
+- Use StyleSheet.create() for styles
+- Reference theme constants instead of hardcoded values
+- Support both light and dark modes
+
+## 🔧 Configuration
+
+### TypeScript
+Path aliases are configured in `tsconfig.json`:
+```json
+{
+  "compilerOptions": {
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  }
+}
+```
+
+### Expo Router
+File-based routing is automatically handled by Expo Router based on the `app/` directory structure.
+
+## 📦 Key Dependencies
+
+- **expo-router**: File-based navigation
+- **react-native**: Core framework
+- **@expo/vector-icons**: Icon library
+- **expo-status-bar**: Status bar management
+- **TypeScript**: Type safety
+
+## 🎯 Next Steps
+
+- [ ] Add authentication flow
+- [ ] Implement API integration
+- [ ] Add item creation/editing screens
+- [ ] Implement barcode scanning
+- [ ] Add search and filtering
+- [ ] Set up state management (if needed)
+- [ ] Add offline support
+- [ ] Implement push notifications
