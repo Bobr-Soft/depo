@@ -38,6 +38,13 @@
             "backgroundColor": "#000000"
           }
         }
+      ],
+      "expo-dev-client",
+      [
+        "expo-dev-client",
+        {
+          "launchMode": "launcher"
+        }
       ]
     ],
     "experiments": {
