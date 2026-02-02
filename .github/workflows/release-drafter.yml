@@ -76,7 +76,7 @@ jobs:
 
       - name: Build Unsigned IPA
         run: |
-          yarn expo prebuild --platform ios
+          yarn expo prebuild --platform ios --no-install
           cd ios
           xcodebuild build \
             -workspace *.xcworkspace \
