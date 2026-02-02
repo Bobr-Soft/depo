@@ -54,30 +54,31 @@ jobs:
           name: ios-build
           path: unsigned-app.ipa
 
-  # 3. Blended Release Job
+  # 3. Update Release Draft (runs on all events)
   update-release-draft:
-    # This runs on PRs to update the draft, AND on main to attach files
-    needs: [build-android, build-ios]
-    if: always() # Ensures draft updates even if builds are skipped on PRs
     runs-on: ubuntu-latest
+    outputs:
+      tag_name: ${{ steps.release_drafter.outputs.tag_name }}
     steps:
-      # Runs your original Release Drafter logic
       - name: Draft Release Notes
         id: release_drafter
         uses: release-drafter/release-drafter@v6
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Downloads the builds and attaches them to the Draft Release
+  # 4. Upload Release Assets (runs only on main branch pushes after builds complete)
+  upload-release-assets:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [build-android, build-ios, update-release-draft]
+    runs-on: ubuntu-latest
+    steps:
       - name: Download Build Artifacts
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/download-artifact@v4
 
       - name: Upload Assets to Release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.release_drafter.outputs.tag_name }}
+          tag_name: ${{ needs.update-release-draft.outputs.tag_name }}
           files: |
             android-build/*.apk
             ios-build/*.ipa
