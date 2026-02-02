@@ -77,7 +77,10 @@ jobs:
       - name: Build Unsigned IPA
         run: |
           yarn expo prebuild --platform ios --no-install
+
           cd ios
+          pod install
+
           xcodebuild build \
             -workspace *.xcworkspace \
             -scheme $(ls -d *.xcodeproj | sed 's/\.xcodeproj//') \
