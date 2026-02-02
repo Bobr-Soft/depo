@@ -38,13 +38,16 @@ jobs:
           distribution: 'temurin'
 
       - name: Build APK
-        run: ./gradlew assembleRelease
-
+        run: |
+          cd apps/mobile
+          npx expo prebuild --platform android
+          cd android
+          ./gradlew assembleRelease
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: android-build
-          path: app/build/outputs/apk/release/*.apk
+          path: apps/mobile/android/app/build/outputs/apk/release/*.apk
 
   # 2. Build iOS Job (Unsigned for Sideloading)
   build-ios:
@@ -92,11 +95,13 @@ jobs:
           name: ios-build
           path: unsigned-app.ipa
 
-  # 3. Blended Release Job
+  # 3. Update Release Draft (runs on all events)
   update-release-draft:
     needs: [build-android, build-ios]
     if: always()
     runs-on: ubuntu-latest
+    outputs:
+      tag_name: ${{ steps.release_drafter.outputs.tag_name }}
     steps:
       - name: Draft Release Notes
         id: release_drafter
@@ -104,15 +109,22 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  # 4. Upload Release Assets (runs only on main branch pushes after builds complete)
+  upload-release-assets:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [build-android, build-ios, update-release-draft]
+    runs-on: ubuntu-latest
+    steps:
       - name: Download Build Artifacts
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/download-artifact@v4
+        with:
+          pattern: '*-build'
+          merge-multiple: true
 
       - name: Upload Assets to Release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.release_drafter.outputs.tag_name || 'untagged' }}
+          tag_name: ${{ needs.update-release-draft.outputs.tag_name }}
           files: |
             android-build/*.apk
             ios-build/*.ipa
