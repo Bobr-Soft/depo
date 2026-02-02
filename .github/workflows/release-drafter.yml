@@ -1,7 +1,4 @@
-# Release Drafter Workflow
-# Automatically creates draft releases based on merged PRs
-
-name: Release Drafter
+name: Build and Release
 
 on:
   push:
@@ -10,13 +7,79 @@ on:
     types: [opened, reopened, synchronize]
 
 permissions:
-  contents: read
-  pull-requests: write
+  contents: write      # Required to create/update releases
+  pull-requests: write # Required for Release Drafter to label PRs
 
 jobs:
-  update-release-draft:
+  # 1. Build Android Job
+  build-android:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
-      - uses: release-drafter/release-drafter@v6
+      - uses: actions/checkout@v4
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+      - name: Build APK
+        run: ./gradlew assembleRelease
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-build
+          path: app/build/outputs/apk/release/*.apk
+
+  # 2. Build iOS Job (Unsigned for Sideloading)
+  build-ios:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Expo/EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+      - name: Build Unsigned IPA
+        run: |
+          npx expo prebuild --platform ios
+          cd ios
+          xcodebuild build -workspace *.xcworkspace -scheme $(ls -d *.xcodeproj | sed 's/\.xcodeproj//') -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
+          mkdir -p Payload && cp -R build/Release-iphoneos/*.app Payload/
+          zip -r ../unsigned-app.ipa Payload
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-build
+          path: unsigned-app.ipa
+
+  # 3. Blended Release Job
+  update-release-draft:
+    # This runs on PRs to update the draft, AND on main to attach files
+    needs: [build-android, build-ios]
+    if: always() # Ensures draft updates even if builds are skipped on PRs
+    runs-on: ubuntu-latest
+    steps:
+      # Runs your original Release Drafter logic
+      - name: Draft Release Notes
+        id: release_drafter
+        uses: release-drafter/release-drafter@v6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Downloads the builds and attaches them to the Draft Release
+      - name: Download Build Artifacts
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/download-artifact@v4
+
+      - name: Upload Assets to Release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release_drafter.outputs.tag_name }}
+          files: |
+            android-build/*.apk
+            ios-build/*.ipa
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
