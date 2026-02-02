@@ -17,18 +17,30 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install Node.js dependencies
+        run: |
+          cd apps/mobile
+          npm install
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
       - name: Build APK
-        run: ./gradlew assembleRelease
+        run: |
+          cd apps/mobile
+          npx expo prebuild --platform android
+          cd android
+          ./gradlew assembleRelease
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: android-build
-          path: app/build/outputs/apk/release/*.apk
+          path: apps/mobile/android/app/build/outputs/apk/release/*.apk
 
   # 2. Build iOS Job (Unsigned for Sideloading)
   build-ios:
