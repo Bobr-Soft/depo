@@ -43,13 +43,20 @@
       [
         "expo-dev-client",
         {
-          "launchMode": "launcher"
+          "launchMode": "most-recent"
         }
       ]
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "efc4a6eb-403b-487d-b671-0a4be28798ee"
+      }
+    },
+    "owner": "tibeetheonly"
   }
 }
