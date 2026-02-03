@@ -222,18 +222,22 @@ jobs:
 
             const assignees = [];
             const apps = [];
+            const labels = ['ci-failure', 'bug'];
 
             if (apiChanged) {
               apps.push('api');
               assignees.push('Barnabas05');
+              labels.push('api');
             }
             if (webChanged) {
               apps.push('web');
               if (!assignees.includes('Barnabas05')) assignees.push('Barnabas05');
+              labels.push('web');
             }
             if (mobileChanged) {
               apps.push('mobile');
               assignees.push('TibeeTheOnly');
+              labels.push('mobile');
             }
 
             // If no apps detected but CI failed, assign all owners as fallback
@@ -269,5 +273,5 @@ jobs:
               title: title,
               body: body,
               assignees: assignees,
-              labels: ['ci-failure', 'bug']
+              labels: labels
             });

@@ -8,7 +8,11 @@
     "lint": "echo \"No linter configured yet\"",
     "test": "echo \"No tests configured yet\""
   },
-  "keywords": ["api", "express", "inventory"],
+  "keywords": [
+    "api",
+    "express",
+    "inventory"
+  ],
   "author": "Bobr-Soft",
   "license": "UNLICENSED",
   "description": "Depo inventory management API",
