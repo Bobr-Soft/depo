@@ -174,3 +174,83 @@ jobs:
             echo "One or more checks failed"
             exit 1
           fi
+
+  # ============================================
+  # Create Issue On CI Failure (pushes only)
+  # ============================================
+  create_issue:
+    name: 🐞 Create CI Failure Issue
+    runs-on: ubuntu-latest
+    needs: build
+    if: ${{ needs.build.result != 'success' && github.event_name == 'push' }}
+    permissions:
+      issues: write
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Filter changed paths
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            api:
+              - 'apps/api/**'
+            web:
+              - 'apps/web/**'
+            mobile:
+              - 'apps/mobile/**'
+
+      - name: Create issue and assign owners
+        uses: actions/github-script@v7
+        env:
+          API_CHANGED: ${{ steps.filter.outputs.api }}
+          WEB_CHANGED: ${{ steps.filter.outputs.web }}
+          MOBILE_CHANGED: ${{ steps.filter.outputs.mobile }}
+        with:
+          script: |
+            const apiChanged = process.env.API_CHANGED === 'true';
+            const webChanged = process.env.WEB_CHANGED === 'true';
+            const mobileChanged = process.env.MOBILE_CHANGED === 'true';
+
+            const assignees = [];
+            const apps = [];
+
+            if (apiChanged) {
+              apps.push('api');
+              assignees.push('Barnabas05');
+            }
+            if (webChanged) {
+              apps.push('web');
+              if (!assignees.includes('Barnabas05')) assignees.push('Barnabas05');
+            }
+            if (mobileChanged) {
+              apps.push('mobile');
+              assignees.push('TibeeTheOnly');
+            }
+
+            const appsText = apps.length ? apps.join(', ') : 'unknown';
+            const title = '🚨 CI Build Failed: ' + appsText;
+            const appsList = apps.length ? apps.map(app => '- `' + app + '`').join('\n') : 'Unable to detect changed apps';
+            const body = '## CI Build Failure\n\n' +
+              '**Commit:** ' + context.sha.substring(0, 7) + '\n' +
+              '**Branch:** ' + context.ref.replace('refs/heads/', '') + '\n' +
+              '**Author:** @' + context.actor + '\n' +
+              '**Run:** ' + context.payload.repository.html_url + '/actions/runs/' + context.runId + '\n\n' +
+              '### Affected Apps\n' + appsList + '\n\n' +
+              '### Action Required\n' +
+              'Please review the failed CI run and fix the issues in your app.\n\n' +
+              '---\n' +
+              '*This issue was automatically created by the CI workflow*';
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: title,
+              body: body,
+              assignees: assignees.length ? assignees : undefined,
+              labels: ['ci-failure', 'bug']
+            });
