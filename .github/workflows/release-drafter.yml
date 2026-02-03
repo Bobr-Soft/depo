@@ -81,6 +81,9 @@ jobs:
           cd ios
           pod install
 
+          # Force Metro to see the root index.js and clear cache
+          export NODE_OPTIONS="--max-old-space-size=4096"
+
           xcodebuild build \
             -workspace *.xcworkspace \
             -scheme $(ls -d *.xcodeproj | sed 's/\.xcodeproj//') \
