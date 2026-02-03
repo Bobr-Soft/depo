@@ -196,6 +196,7 @@ jobs:
         id: filter
         uses: dorny/paths-filter@v3
         with:
+          base: ${{ github.event.before }}
           filters: |
             api:
               - 'apps/api/**'
@@ -235,6 +236,12 @@ jobs:
               assignees.push('TibeeTheOnly');
             }
 
+            // If no apps detected but CI failed, assign all owners as fallback
+            if (assignees.length === 0) {
+              assignees.push('Barnabas05', 'TibeeTheOnly');
+              core.warning('No changed apps detected, assigning all owners');
+            }
+
             const failedStages = [];
             if (process.env.LINT_RESULT === 'failure') failedStages.push('Lint');
             if (process.env.TYPECHECK_RESULT === 'failure') failedStages.push('Type Check');
@@ -261,6 +268,6 @@ jobs:
               repo: context.repo.repo,
               title: title,
               body: body,
-              assignees: assignees.length ? assignees : undefined,
+              assignees: assignees,
               labels: ['ci-failure', 'bug']
             });
