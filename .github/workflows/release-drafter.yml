@@ -76,23 +76,46 @@ jobs:
 
       - name: Build Unsigned IPA
         run: |
-          yarn expo prebuild --platform ios --no-install
+          # --- FIX START ---
+          # 1. Force package.json to point to index.js
+          # This tells Expo Prebuild to generate the AppDelegate using index.js
+          npm pkg set main="index.js"
 
+          # 2. Create a Shim App.js
+          # Even with the fix above, some cache might look for App.js.
+          # We create one that simply redirects to the router.
+          echo "import 'expo-router/entry';" > App.js
+
+          # 3. Clean Install Dependencies
+          # We need to ensure the packager sees these new files
+          yarn install
+          # --- FIX END ---
+
+          # 4. Generate Native Project
+          yarn expo prebuild --platform ios --no-install --clean
+
+          # 5. Install Pods
           cd ios
           pod install
 
-          # Force Metro to see the root index.js and clear cache
-          export NODE_OPTIONS="--max-old-space-size=4096"
-
+          # 6. Build with Explicit Entry File
+          # We explicitly set ENTRY_FILE to index.js to override any defaults
           xcodebuild build \
-            -workspace *.xcworkspace \
-            -scheme $(ls -d *.xcodeproj | sed 's/\.xcodeproj//') \
+            -workspace depo.xcworkspace \
+            -scheme depo \
             -configuration Release \
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
+            ENTRY_FILE=index.js \
             CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO
-          mkdir -p Payload && cp -R build/Release-iphoneos/*.app Payload/
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            -derivedDataPath build
+
+          # 7. Package
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/depo.app Payload/
           zip -r ../unsigned-app.ipa Payload
 
       - name: Upload IPA Artifact
