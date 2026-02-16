@@ -9,13 +9,19 @@
   },
   "dependencies": {
     "@gluestack-style/react": "^1.0.57",
+    "@gluestack-ui/button": "^1.0.14",
     "@gluestack-ui/core": "^3.0.12",
+    "@gluestack-ui/icon": "^0.1.27",
     "@gluestack-ui/nativewind-utils": "^1.0.28",
+    "@gluestack-ui/overlay": "^0.1.22",
+    "@gluestack-ui/toast": "^1.0.9",
     "@gluestack-ui/utils": "^3.0.15",
     "@react-native-aria/focus": "^0.2.9",
     "clsx": "^2.1.1",
     "nativewind": "^4.2.1",
-    "tailwind-merge": "^3.4.0"
+    "react-native-svg": "^15.2.0",
+    "tailwind-merge": "^3.4.0",
+    "tailwind-variants": "^3.2.2"
   },
   "devDependencies": {
     "tailwindcss": "3.4.0"

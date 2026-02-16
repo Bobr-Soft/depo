@@ -9,6 +9,8 @@ module.exports = {
     './src/**/*.{html,js,jsx,ts,tsx,mdx}',
     '../../packages/ui/src/components/**/*.{html,js,jsx,ts,tsx}',
     '../../packages/ui/src/components/ui/gluestack-ui-provider/*.{html,js,jsx,ts,tsx}',
+    '../../packages/ui/src/**/*.{html,js,jsx,ts,tsx}',
+    '../../packages/ui/src/components/**/*.{html,js,jsx,ts,tsx}',
   ],
   presets: [require('nativewind/preset')],
   important: 'html',

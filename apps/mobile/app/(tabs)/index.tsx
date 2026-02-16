@@ -1,59 +1,86 @@
-import { StyleSheet, ScrollView } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { View, Text, Card, Button } from '@/components';
-import { Spacing } from '@/constants';
-
+import {
+  Box,
+  Center,
+  Button,
+  ButtonText,
+  ButtonIcon,
+  ButtonGroup,
+  Icon,
+  AddIcon,
+  InfoIcon,
+  ButtonSpinner,
+  ArrowUpIcon,
+  Heading,
+  Text,
+  HStack,
+  VStack,
+  ThreeDotsIcon,
+  Input,
+  InputField,
+} from "@repo/ui";
+import React from "react";
+import { StyleSheet, ScrollView } from "react-native";
+import { Card } from "@/components";
+import { Spacing } from "@/constants";
 export default function HomeScreen() {
   return (
-    <View style={styles.container}>
+    <Box style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
-        <View style={styles.header}>
-          <Text variant="title">Welcome to Depo</Text>
-          <Text variant="body" style={styles.subtitle}>
+        <Box style={styles.header}>
+          <Heading size="xl">Welcome to Depo</Heading>
+          <Text size="md" style={styles.subtitle}>
             Manage your inventory efficiently
           </Text>
-        </View>
+        </Box>
 
         <Card>
-          <Text variant="heading" style={styles.cardTitle}>
+          <Heading size="lg" style={styles.cardTitle}>
             Quick Actions
-          </Text>
-          <View style={styles.buttonGroup}>
-            <Button title="Add Item" variant="primary" />
-            <Button title="Scan Barcode" variant="secondary" />
-          </View>
+          </Heading>
+          <VStack space="sm">
+            <Button
+              action="primary"
+              variant="solid"
+              size="lg"
+              isDisabled={false}
+            >
+              <ButtonText>Button</ButtonText>
+            </Button>
+            <Button variant="solid" size="lg" action="primary">
+              <ButtonText>Click me</ButtonText>
+            </Button>
+          </VStack>
         </Card>
 
         <Card>
-          <Text variant="heading" style={styles.cardTitle}>
+          <Heading size="lg" style={styles.cardTitle}>
             Overview
-          </Text>
-          <View style={styles.stats}>
-            <View style={styles.stat}>
-              <Text variant="title" weight="bold">
+          </Heading>
+          <Box style={styles.stats}>
+            <Box style={styles.stat}>
+              <Heading size="xl">
                 0
-              </Text>
-              <Text variant="caption">Total Items</Text>
-            </View>
-            <View style={styles.stat}>
-              <Text variant="title" weight="bold">
+              </Heading>
+              <Text size="sm">Total Items</Text>
+            </Box>
+            <Box style={styles.stat}>
+              <Heading size="xl">
                 0
-              </Text>
-              <Text variant="caption">Categories</Text>
-            </View>
-            <View style={styles.stat}>
-              <Text variant="title" weight="bold">
+              </Heading>
+              <Text size="sm">Categories</Text>
+            </Box>
+            <Box style={styles.stat}>
+              <Heading size="xl">
                 0
-              </Text>
-              <Text variant="caption">Locations</Text>
-            </View>
-          </View>
+              </Heading>
+              <Text size="sm">Locations</Text>
+            </Box>
+          </Box>
         </Card>
       </ScrollView>
-    </View>
+    </Box>
   );
 }
-
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -72,7 +99,7 @@ const styles = StyleSheet.create({
     marginTop: Spacing.xs,
   },
   actionsRow: {
-    flexDirection: 'row',
+    flexDirection: "row",
     gap: Spacing.md,
   },
   actionButton: {
@@ -82,22 +109,22 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.lg,
   },
   statsGrid: {
-    flexDirection: 'row',
+    flexDirection: "row",
     gap: Spacing.md,
   },
   statCard: {
     flex: 1,
     padding: Spacing.md,
     borderRadius: 12,
-    alignItems: 'center',
+    alignItems: "center",
     gap: Spacing.xs,
   },
   statLabel: {
     opacity: 0.7,
-    textAlign: 'center',
+    textAlign: "center",
   },
   emptyState: {
-    alignItems: 'center',
+    alignItems: "center",
     paddingVertical: Spacing.xl,
     gap: Spacing.xs,
   },
@@ -111,18 +138,18 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.lg,
   },
   buttonGroup: {
-    flexDirection: 'row',
+    flexDirection: "row",
     gap: Spacing.md,
   },
   stats: {
-    flexDirection: 'row',
+    flexDirection: "row",
     gap: Spacing.md,
   },
   stat: {
     flex: 1,
     padding: Spacing.md,
     borderRadius: 12,
-    alignItems: 'center',
+    alignItems: "center",
     gap: Spacing.xs,
   },
 });

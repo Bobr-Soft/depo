@@ -3,10 +3,10 @@
   "main": "index.js",
   "version": "1.0.0",
   "scripts": {
-    "start": "expo start",
+    "start": "expo start --dev-client",
     "reset-project": "node ./scripts/reset-project.js",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
+    "android": "expo start --android --dev-client",
+    "ios": "expo start --ios --dev-client",
     "web": "expo start --web",
     "lint": "expo lint",
     "build:ios": "eas build --platform ios --profile preview",
@@ -40,6 +40,7 @@
     "react-native-reanimated": "~4.1.1",
     "react-native-safe-area-context": "~5.6.0",
     "react-native-screens": "~4.16.0",
+    "react-native-svg": "^15.15.3",
     "react-native-web": "~0.21.0",
     "react-native-worklets": "0.5.1"
   },

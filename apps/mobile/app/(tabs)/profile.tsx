@@ -1,5 +1,6 @@
 import { StyleSheet, ScrollView } from 'react-native';
-import { View, Text, Card, Button } from '@/components';
+import { Box, Center, Text, Heading, Button, ButtonText, VStack } from '@repo/ui';
+import { Card } from '@/components';
 import { Spacing, APP_NAME, APP_VERSION, Colors, Shadows, BorderRadius } from '@/constants';
 import { useColorScheme } from '@/hooks';
 
@@ -8,68 +9,70 @@ export default function ProfileScreen() {
   const colors = Colors[colorScheme];
 
   return (
-    <View style={styles.container}>
+    <Box style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        <View style={styles.header}>
-          <View style={[styles.avatar, { backgroundColor: colors.primary, ...Shadows.md }]}>
-            <Text variant="title" weight="bold" style={{ color: '#FFFFFF' }}>
+        <Box style={styles.header}>
+          <Center style={[styles.avatar, { backgroundColor: colors.primary, ...Shadows.md }]}>
+            <Heading size="2xl" style={{ color: '#FFFFFF' }}>
               U
-            </Text>
-          </View>
-          <Text variant="heading" weight="bold">User Name</Text>
-          <Text variant="body" style={styles.email}>
+            </Heading>
+          </Center>
+          <Heading size="xl">User Name</Heading>
+          <Text size="md" style={styles.email}>
             user@example.com
           </Text>
-        </View>
+        </Box>
 
         <Card variant="elevated">
-          <Text variant="heading" weight="bold" style={styles.sectionTitle}>
+          <Heading size="lg" style={styles.sectionTitle}>
             ⚙️ Settings
-          </Text>
-          <View style={styles.settingsList}>
-            <View style={styles.settingItem}>
-              <View style={styles.settingLeft}>
-                <Text variant="body" weight="medium">🌓 Theme</Text>
-              </View>
-              <Text variant="body" style={styles.settingValue}>
+          </Heading>
+          <Box style={styles.settingsList}>
+            <Box style={styles.settingItem}>
+              <Box style={styles.settingLeft}>
+                <Text size="md">🌓 Theme</Text>
+              </Box>
+              <Text size="md" style={styles.settingValue}>
                 System
               </Text>
-            </View>
-            <View style={styles.divider} />
-            <View style={styles.settingItem}>
-              <View style={styles.settingLeft}>
-                <Text variant="body" weight="medium">🔔 Notifications</Text>
-              </View>
-              <Text variant="body" style={styles.settingValue}>
+            </Box>
+            <Box style={styles.divider} />
+            <Box style={styles.settingItem}>
+              <Box style={styles.settingLeft}>
+                <Text size="md">🔔 Notifications</Text>
+              </Box>
+              <Text size="md" style={styles.settingValue}>
                 Enabled
               </Text>
-            </View>
-          </View>
+            </Box>
+          </Box>
         </Card>
 
         <Card variant="elevated">
-          <Text variant="heading" weight="bold" style={styles.sectionTitle}>
+          <Heading size="lg" style={styles.sectionTitle}>
             ℹ️ About
-          </Text>
-          <View style={styles.aboutList}>
-            <View style={styles.aboutItem}>
-              <Text variant="caption" style={styles.aboutLabel}>App Name</Text>
-              <Text variant="body" weight="semibold">
+          </Heading>
+          <Box style={styles.aboutList}>
+            <Box style={styles.aboutItem}>
+              <Text size="sm" style={styles.aboutLabel}>App Name</Text>
+              <Text size="md">
                 {APP_NAME}
               </Text>
-            </View>
-            <View style={styles.aboutItem}>
-              <Text variant="caption" style={styles.aboutLabel}>Version</Text>
-              <Text variant="body" weight="semibold">
+            </Box>
+            <Box style={styles.aboutItem}>
+              <Text size="sm" style={styles.aboutLabel}>Version</Text>
+              <Text size="md">
                 {APP_VERSION}
               </Text>
-            </View>
-          </View>
+            </Box>
+          </Box>
         </Card>
 
-        <Button title="Sign Out" variant="outline" size="lg" style={styles.signOutButton} />
+        <Button variant="outline" action="primary" size="lg" style={styles.signOutButton}>
+          <ButtonText>Sign Out</ButtonText>
+        </Button>
       </ScrollView>
-    </View>
+    </Box>
   );
 }
 

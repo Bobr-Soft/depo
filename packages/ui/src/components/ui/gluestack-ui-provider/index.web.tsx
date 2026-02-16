@@ -1,9 +1,8 @@
 'use client';
 import React, { useEffect, useLayoutEffect } from 'react';
 import { config } from './config';
-import { OverlayProvider } from '@gluestack-ui/core/overlay/creator';
-import { ToastProvider } from '@gluestack-ui/core/toast/creator';
-import { setFlushStyles } from '@gluestack-ui/utils/ativewind-utils';
+import { OverlayProvider } from '@gluestack-ui/overlay';
+import { ToastProvider } from '@gluestack-ui/toast';
 import { script } from './script';
 
 export type ModeType = 'light' | 'dark' | 'system';
@@ -38,8 +37,6 @@ export function GluestackUIProvider({
     }, '');
     cssVariablesWithMode += `${cssVariables} \n}`;
   });
-
-  setFlushStyles(cssVariablesWithMode);
 
   const handleMediaQuery = React.useCallback((e: MediaQueryListEvent) => {
     script(e.matches ? 'dark' : 'light');
