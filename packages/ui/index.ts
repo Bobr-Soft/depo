@@ -1,10 +1,44 @@
-export * from './src/components/ui/gluestack-ui-provider';
-export * from './src/components/ui/vstack';
-export * from './src/components/ui/hstack';
-export * from './src/components/ui/box';
-export * from './src/components/ui/center';
-export * from './src/components/ui/text';
-export * from './src/components/ui/heading';
-export * from './src/components/ui/button';
-export * from './src/components/ui/icon';
-export * from './src/components/ui/input';
+// Tamagui Provider
+export { TamaguiProvider } from './src/TamaguiProvider'
+
+// Re-export Tamagui components
+export * from 'tamagui'
+
+// Re-export commonly used icons explicitly to avoid conflicts
+export {
+  Scan,
+  QrCode,
+  Camera,
+  Plus,
+  Minus,
+  Check,
+  X,
+  ChevronRight,
+  ChevronLeft,
+  ChevronDown,
+  ChevronUp,
+  Menu,
+  Settings,
+  User,
+  Home,
+  Search,
+  Bell,
+  Mail,
+  Heart,
+  Star,
+  Edit3,
+  Trash2,
+  Download,
+  Upload,
+  Share2,
+  LogOut,
+  LogIn,
+  Truck,
+  PackagePlus,
+  SearchCode,
+  ScanBarcode,
+  LayoutDashboard
+} from '@tamagui/lucide-icons'
+
+
+

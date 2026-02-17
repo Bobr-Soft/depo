@@ -20,11 +20,5 @@
   "workspaces": [
     "apps/*",
     "packages/*"
-  ],
-  "dependencies": {
-    "nativewind": "^4.2.1",
-    "postcss": "^8.5.6",
-    "tailwind-variants": "^3.2.2",
-    "tailwindcss": "^4.1.18"
-  }
+  ]
 }

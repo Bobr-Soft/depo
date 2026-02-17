@@ -1,155 +1,84 @@
-import {
-  Box,
-  Center,
-  Button,
-  ButtonText,
-  ButtonIcon,
-  ButtonGroup,
-  Icon,
-  AddIcon,
-  InfoIcon,
-  ButtonSpinner,
-  ArrowUpIcon,
-  Heading,
-  Text,
-  HStack,
-  VStack,
-  ThreeDotsIcon,
-  Input,
-  InputField,
-} from "@repo/ui";
 import React from "react";
-import { StyleSheet, ScrollView } from "react-native";
-import { Card } from "@/components";
-import { Spacing } from "@/constants";
+import { ScrollView, YStack, XStack, Button, H1, Text, Truck, PackagePlus, ScanBarcode } from "@repo/ui";
+import { router } from "expo-router";
+
 export default function HomeScreen() {
   return (
-    <Box style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        <Box style={styles.header}>
-          <Heading size="xl">Welcome to Depo</Heading>
-          <Text size="md" style={styles.subtitle}>
-            Manage your inventory efficiently
+    <ScrollView flex={1} backgroundColor="$background">
+      <YStack padding="$4" gap="$4">
+        <Button
+          size="$4"
+          theme="green"
+          height="$12"
+          flexDirection="column"
+          gap="$2"
+          onPress={() => router.push("/inbound")}>
+          <PackagePlus size={28} />
+          <Text fontSize={16}>Bevételezés (Inbound)</Text>
+        </Button>
+        <Button
+          size="$4"
+          theme="yellow"
+          height="$12"
+          flexDirection="column"
+          gap="$2"
+          onPress={() => router.push("/picking")}>
+          <Truck size={28} />
+          <Text fontSize={16}>Komissiózás (Picking)</Text>
+        </Button>
+        <Button
+          size="$4"
+          theme="blue"
+          height="$12"
+          flexDirection="column"
+          gap="$2"
+          onPress={() => router.push("/scanner")}>
+          <ScanBarcode size={28} />
+          <Text fontSize={16}>Keresés (Scan)</Text>
+        </Button>
+        <XStack gap="$3">
+          <Button flex={1} height="$12">Button 1</Button>
+          <Button flex={1} height="$12">Button 2</Button>
+        </XStack>
+      </YStack>
+
+      <YStack padding="$4" gap="$4">
+        {/* Size tokens: $1, $2, $3, $4, $5, $6, etc. */}
+        <Button size="$6">Large Button</Button>
+
+        {/* Theme variants */}
+        <Button theme="blue">Blue Button</Button>
+        <Button theme="red">Red Button</Button>
+
+        {/* Variants */}
+        <Button variant="outlined">Outlined</Button>
+
+        {/* Custom styling with tokens */}
+        <Button
+          size="$5"
+          backgroundColor="$blue10"
+          color="white"
+          borderRadius="$4"
+          pressStyle={{ backgroundColor: "$blue9" }}
+        >
+          Custom Styled
+        </Button>
+
+        {/* Layout with spacing tokens */}
+        <XStack gap="$3" padding="$4">
+          <Button flex={1}>Button 1</Button>
+          <Button flex={1}>Button 2</Button>
+        </XStack>
+
+        {/* Text styling */}
+        <YStack gap="$2">
+          <H1 color="$color">Heading</H1>
+          <Text fontSize="$5" color="$gray11">
+            Body text with tokens
           </Text>
-        </Box>
-
-        <Card>
-          <Heading size="lg" style={styles.cardTitle}>
-            Quick Actions
-          </Heading>
-          <VStack space="sm">
-            <Button
-              action="primary"
-              variant="solid"
-              size="lg"
-              isDisabled={false}
-            >
-              <ButtonText>Button</ButtonText>
-            </Button>
-            <Button variant="solid" size="lg" action="primary">
-              <ButtonText>Click me</ButtonText>
-            </Button>
-          </VStack>
-        </Card>
-
-        <Card>
-          <Heading size="lg" style={styles.cardTitle}>
-            Overview
-          </Heading>
-          <Box style={styles.stats}>
-            <Box style={styles.stat}>
-              <Heading size="xl">
-                0
-              </Heading>
-              <Text size="sm">Total Items</Text>
-            </Box>
-            <Box style={styles.stat}>
-              <Heading size="xl">
-                0
-              </Heading>
-              <Text size="sm">Categories</Text>
-            </Box>
-            <Box style={styles.stat}>
-              <Heading size="xl">
-                0
-              </Heading>
-              <Text size="sm">Locations</Text>
-            </Box>
-          </Box>
-        </Card>
-      </ScrollView>
-    </Box>
+        </YStack>
+      </YStack>
+    </ScrollView>
   );
 }
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  scrollContent: {
-    flexGrow: 1,
-    padding: Spacing.lg,
-    gap: Spacing.lg,
-  },
-  header: {
-    paddingVertical: Spacing.md,
-    gap: Spacing.xs,
-  },
-  subtitle: {
-    opacity: 0.6,
-    marginTop: Spacing.xs,
-  },
-  actionsRow: {
-    flexDirection: "row",
-    gap: Spacing.md,
-  },
-  actionButton: {
-    flex: 1,
-  },
-  sectionTitle: {
-    marginBottom: Spacing.lg,
-  },
-  statsGrid: {
-    flexDirection: "row",
-    gap: Spacing.md,
-  },
-  statCard: {
-    flex: 1,
-    padding: Spacing.md,
-    borderRadius: 12,
-    alignItems: "center",
-    gap: Spacing.xs,
-  },
-  statLabel: {
-    opacity: 0.7,
-    textAlign: "center",
-  },
-  emptyState: {
-    alignItems: "center",
-    paddingVertical: Spacing.xl,
-    gap: Spacing.xs,
-  },
-  emptyText: {
-    opacity: 0.5,
-  },
-  emptySubtext: {
-    opacity: 0.4,
-  },
-  cardTitle: {
-    marginBottom: Spacing.lg,
-  },
-  buttonGroup: {
-    flexDirection: "row",
-    gap: Spacing.md,
-  },
-  stats: {
-    flexDirection: "row",
-    gap: Spacing.md,
-  },
-  stat: {
-    flex: 1,
-    padding: Spacing.md,
-    borderRadius: 12,
-    alignItems: "center",
-    gap: Spacing.xs,
-  },
-});
+

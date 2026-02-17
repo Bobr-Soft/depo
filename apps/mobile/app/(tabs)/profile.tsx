@@ -1,5 +1,4 @@
-import { StyleSheet, ScrollView } from 'react-native';
-import { Box, Center, Text, Heading, Button, ButtonText, VStack } from '@repo/ui';
+import { StyleSheet, ScrollView, View, Text } from 'react-native';
 import { Card } from '@/components';
 import { Spacing, APP_NAME, APP_VERSION, Colors, Shadows, BorderRadius } from '@/constants';
 import { useColorScheme } from '@/hooks';
@@ -9,70 +8,66 @@ export default function ProfileScreen() {
   const colors = Colors[colorScheme];
 
   return (
-    <Box style={styles.container}>
+    <View style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        <Box style={styles.header}>
-          <Center style={[styles.avatar, { backgroundColor: colors.primary, ...Shadows.md }]}>
-            <Heading size="2xl" style={{ color: '#FFFFFF' }}>
+        <View style={styles.header}>
+          <View style={[styles.avatar, { backgroundColor: colors.primary, ...Shadows.md }]}>
+            <Text style={styles.avatarText}>
               U
-            </Heading>
-          </Center>
-          <Heading size="xl">User Name</Heading>
-          <Text size="md" style={styles.email}>
+            </Text>
+          </View>
+          <Text style={styles.heading}>User Name</Text>
+          <Text style={styles.email}>
             user@example.com
           </Text>
-        </Box>
+        </View>
 
         <Card variant="elevated">
-          <Heading size="lg" style={styles.sectionTitle}>
+          <Text style={styles.sectionTitle}>
             ⚙️ Settings
-          </Heading>
-          <Box style={styles.settingsList}>
-            <Box style={styles.settingItem}>
-              <Box style={styles.settingLeft}>
-                <Text size="md">🌓 Theme</Text>
-              </Box>
-              <Text size="md" style={styles.settingValue}>
+          </Text>
+          <View style={styles.settingsList}>
+            <View style={styles.settingItem}>
+              <View style={styles.settingLeft}>
+                <Text>🌓 Theme</Text>
+              </View>
+              <Text style={styles.settingValue}>
                 System
               </Text>
-            </Box>
-            <Box style={styles.divider} />
-            <Box style={styles.settingItem}>
-              <Box style={styles.settingLeft}>
-                <Text size="md">🔔 Notifications</Text>
-              </Box>
-              <Text size="md" style={styles.settingValue}>
+            </View>
+            <View style={styles.divider} />
+            <View style={styles.settingItem}>
+              <View style={styles.settingLeft}>
+                <Text>🔔 Notifications</Text>
+              </View>
+              <Text style={styles.settingValue}>
                 Enabled
               </Text>
-            </Box>
-          </Box>
+            </View>
+          </View>
         </Card>
 
         <Card variant="elevated">
-          <Heading size="lg" style={styles.sectionTitle}>
+          <Text style={styles.sectionTitle}>
             ℹ️ About
-          </Heading>
-          <Box style={styles.aboutList}>
-            <Box style={styles.aboutItem}>
-              <Text size="sm" style={styles.aboutLabel}>App Name</Text>
-              <Text size="md">
+          </Text>
+          <View style={styles.aboutList}>
+            <View style={styles.aboutItem}>
+              <Text style={styles.aboutLabel}>App Name</Text>
+              <Text>
                 {APP_NAME}
               </Text>
-            </Box>
-            <Box style={styles.aboutItem}>
-              <Text size="sm" style={styles.aboutLabel}>Version</Text>
-              <Text size="md">
+            </View>
+            <View style={styles.aboutItem}>
+              <Text style={styles.aboutLabel}>Version</Text>
+              <Text>
                 {APP_VERSION}
               </Text>
-            </Box>
-          </Box>
+            </View>
+          </View>
         </Card>
-
-        <Button variant="outline" action="primary" size="lg" style={styles.signOutButton}>
-          <ButtonText>Sign Out</ButtonText>
-        </Button>
       </ScrollView>
-    </Box>
+    </View>
   );
 }
 
@@ -98,10 +93,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: Spacing.md,
   },
+  avatarText: {
+    fontSize: 32,
+    fontWeight: 'bold',
+    color: '#FFFFFF',
+  },
+  heading: {
+    fontSize: 24,
+    fontWeight: 'bold',
+  },
   email: {
     opacity: 0.6,
   },
   sectionTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
     marginBottom: Spacing.lg,
   },
   settingsList: {
@@ -139,8 +145,5 @@ const styles = StyleSheet.create({
     opacity: 0.5,
     textTransform: 'uppercase',
     fontSize: 11,
-  },
-  signOutButton: {
-    marginTop: Spacing.md,
   },
 });

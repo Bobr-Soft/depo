@@ -1,18 +1,14 @@
-import { useEffect } from 'react';
-import { Stack } from 'expo-router';
-import { StatusBar } from 'expo-status-bar';
-import * as SplashScreen from 'expo-splash-screen';
-import { useColorScheme } from '@/hooks';
+import { TamaguiProvider } from "@repo/ui";
+import { Stack } from "expo-router";
+import * as SplashScreen from "expo-splash-screen";
+import { StatusBar } from "expo-status-bar";
+import { useEffect } from "react";
+import "react-native-reanimated";
 
-import "../global.css";
-
-import { GluestackUIProvider } from "@repo/ui";
-
+// Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
-  const colorScheme = useColorScheme();
-
   useEffect(() => {
     const timer = setTimeout(() => {
       SplashScreen.hideAsync();
@@ -22,11 +18,11 @@ export default function RootLayout() {
   }, []);
 
   return (
-    <GluestackUIProvider mode={colorScheme === 'dark' ? 'dark' : 'light'}>
-      <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
+    <TamaguiProvider>
       <Stack>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       </Stack>
-    </GluestackUIProvider>
+      <StatusBar style="auto" />
+    </TamaguiProvider>
   );
 }

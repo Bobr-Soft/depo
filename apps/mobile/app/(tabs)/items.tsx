@@ -1,26 +1,17 @@
-import { StyleSheet } from 'react-native';
-import { Box, Center, Text, Heading, Button, ButtonText } from '@repo/ui';
+import { StyleSheet, View, Text } from 'react-native';
 import { Spacing } from '@/constants';
 
 export default function ItemsScreen() {
   return (
-    <Box style={styles.container}>
-      <Center style={styles.emptyState}>
-        <Text size="6xl" style={styles.emptyIcon}>📦</Text>
-        <Heading size="xl">No Items Yet</Heading>
-        <Text size="md" style={styles.emptyText}>
+    <View style={styles.container}>
+      <View style={styles.emptyState}>
+        <Text style={styles.emptyIcon}>📦</Text>
+        <Text style={styles.heading}>No Items Yet</Text>
+        <Text style={styles.emptyText}>
           Start building your inventory by adding your first item
         </Text>
-        <Button
-          variant="solid"
-          action="primary"
-          size="lg"
-          style={styles.button}
-        >
-          <ButtonText>➕ Add Your First Item</ButtonText>
-        </Button>
-      </Center>
-    </Box>
+      </View>
+    </View>
   );
 }
 
@@ -39,13 +30,13 @@ const styles = StyleSheet.create({
     fontSize: 64,
     marginBottom: Spacing.md,
   },
+  heading: {
+    fontSize: 24,
+    fontWeight: 'bold',
+  },
   emptyText: {
     textAlign: 'center',
     opacity: 0.6,
     maxWidth: 280,
-  },
-  button: {
-    marginTop: Spacing.lg,
-    minWidth: 240,
   },
 });
