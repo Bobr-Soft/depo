@@ -2,10 +2,11 @@ const express = require('express');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const db = require('./db');
+const { getTasksForUser } = require('./tasks');
 require('dotenv').config();
 
 const app = express();
-app.use(cors({ origin: ['http://localhost:5173','https://leltar-app.vercel.app'] }));
+app.use(cors({ origin: ['http://localhost:5173','https://leltar-app.vercel.app', 'http://192.168.1.100:4000'] }));
 app.use(express.json());
 
 const JWT_SECRET = process.env.JWT_SECRET || (() => {
@@ -68,7 +69,7 @@ async function authenticateJWT(req, res, next) {
     } else {
       req.user = decoded;
     }
-    
+
     next();
   } catch (err) {
     if (err.name === 'TokenExpiredError') {
@@ -84,12 +85,12 @@ function requireAdmin(req, res, next) {
   if (!req.user) {
     return res.status(401).json({ message: 'Authentication required' });
   }
-  
+
   const userRole = req.user.role?.toLowerCase();
   if (userRole !== 'admin') {
     return res.status(403).json({ message: 'Admin privileges required' });
   }
-  
+
   next();
 }
 
@@ -134,16 +135,16 @@ app.post('/login', async (req, res) => {
           rawRole = rows[0].role.toString().trim().toLowerCase();
         }
       }
-      
+
       const role = rawRole ? rawRole.charAt(0).toUpperCase() + rawRole.slice(1) : 'Teacher';
-      
+
       console.log('✅ Raw role (lowercase):', rawRole);
       console.log('✅ Capitalized role:', role);
-      
+
       const responseData = { token: '', user: { email, id: rows[0].id, role } };
       const token = jwt.sign({ email, userId: rows[0].id, role }, JWT_SECRET, { expiresIn: '1h' });
       responseData.token = token;
-      
+
       console.log('📤 Sending response:', JSON.stringify(responseData));
       res.json(responseData);
     } else {
@@ -165,7 +166,7 @@ app.get('/items', authenticateJWT, async (req, res) => {
   try {
     if (dbConnected) {
       const [rows] = await db.query(`
-        SELECT 
+        SELECT
           items.id,
           items.name,
           items.barcode,
@@ -190,11 +191,11 @@ app.get('/items', authenticateJWT, async (req, res) => {
 
 app.post('/items', authenticateJWT, async (req, res) => {
   const { name, barcode, description, quantity, category_id, location_id } = req.body;
-  
+
   if (!isValidString(name, 255)) {
     return res.status(400).json({ message: 'Invalid item name' });
   }
-  
+
   try {
     if (dbConnected) {
       const [result] = await db.query(
@@ -204,7 +205,7 @@ app.post('/items', authenticateJWT, async (req, res) => {
 
       // Get the newly created item with category and location names
       const [rows] = await db.query(`
-        SELECT 
+        SELECT
           items.id,
           items.name,
           items.barcode,
@@ -240,15 +241,15 @@ app.put('/items/:id', authenticateJWT, async (req, res) => {
 
   try {
     await db.query(
-      `UPDATE items 
-       SET name=?, barcode=?, description=?, quantity=?, category_id=?, location_id=? 
+      `UPDATE items
+       SET name=?, barcode=?, description=?, quantity=?, category_id=?, location_id=?
        WHERE id=?`,
       [name, barcode, description, quantity, category_id, location_id, id]
     );
 
     // Get the updated item with category and location names
     const [rows] = await db.query(`
-      SELECT 
+      SELECT
         items.id,
         items.name,
         items.barcode,
@@ -311,11 +312,11 @@ app.get('/users', authenticateJWT, async (req, res) => {
 
 app.post('/users', authenticateJWT, requireAdmin, async (req, res) => {
   const { email, password, role, isActive } = req.body;
-  
+
   if (!isValidEmail(email)) {
     return res.status(400).json({ message: 'Invalid email format' });
   }
-  
+
   try {
     if (dbConnected) {
       // Normalize role: 'Admin' -> 'admin', 'Teacher' -> 'teacher' for database
@@ -350,11 +351,11 @@ app.post('/users', authenticateJWT, requireAdmin, async (req, res) => {
 app.put('/users/:id', authenticateJWT, requireAdmin, async (req, res) => {
   const { id } = req.params;
   const { email, role, isActive } = req.body;
-  
+
   if (!isValidEmail(email)) {
     return res.status(400).json({ message: 'Invalid email format' });
   }
-  
+
   console.log('📝 Updating user:', { id, email, role, isActive, type: typeof isActive });
   try {
     if (dbConnected) {
@@ -421,11 +422,11 @@ app.get('/categories', authenticateJWT, async (req, res) => {
 
 app.post('/categories', authenticateJWT, requireAdmin, async (req, res) => {
   const { name, description } = req.body;
-  
+
   if (!isValidString(name, 255)) {
     return res.status(400).json({ message: 'Invalid category name' });
   }
-  
+
   try {
     if (dbConnected) {
       const [result] = await db.query('INSERT INTO categories (name, description) VALUES (?, ?)', [name, description]);
@@ -443,11 +444,11 @@ app.post('/categories', authenticateJWT, requireAdmin, async (req, res) => {
 app.put('/categories/:id', authenticateJWT, requireAdmin, async (req, res) => {
   const { id } = req.params;
   const { name, description } = req.body;
-  
+
   if (!isValidString(name, 255)) {
     return res.status(400).json({ message: 'Invalid category name' });
   }
-  
+
   try {
     if (dbConnected) {
       await db.query('UPDATE categories SET name=?, description=? WHERE id=?', [name, description, id]);
@@ -493,11 +494,11 @@ app.get('/locations', authenticateJWT, async (req, res) => {
 
 app.post('/locations', authenticateJWT, requireAdmin, async (req, res) => {
   const { name, description } = req.body;
-  
+
   if (!isValidString(name, 255)) {
     return res.status(400).json({ message: 'Invalid location name' });
   }
-  
+
   try {
     if (dbConnected) {
       const [result] = await db.query('INSERT INTO locations (name, description) VALUES (?, ?)', [name, description]);
@@ -515,11 +516,11 @@ app.post('/locations', authenticateJWT, requireAdmin, async (req, res) => {
 app.put('/locations/:id', authenticateJWT, requireAdmin, async (req, res) => {
   const { id } = req.params;
   const { name, description } = req.body;
-  
+
   if (!isValidString(name, 255)) {
     return res.status(400).json({ message: 'Invalid location name' });
   }
-  
+
   try {
     if (dbConnected) {
       await db.query('UPDATE locations SET name=?, description=? WHERE id=?', [name, description, id]);
@@ -549,8 +550,21 @@ app.delete('/locations/:id', authenticateJWT, requireAdmin, async (req, res) => 
   }
 });
 
-
-
+// Get tasks for authenticated user
+app.get('/tasks', authenticateJWT, async (req, res) => {
+  try {
+    if (dbConnected) {
+      const userEmail = req.user.email;
+      const tasks = await getTasksForUser(userEmail);
+      res.json(tasks);
+    } else {
+      res.status(503).json({ message: 'Database not available' });
+    }
+  } catch (err) {
+    console.error('❌ Error fetching tasks:', err.message);
+    res.status(500).json({ message: 'Database error' });
+  }
+});
 
 const PORT = 4000;
 app.listen(PORT, () => {
