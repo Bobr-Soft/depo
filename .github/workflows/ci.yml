@@ -35,7 +35,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'yarn'
+
+      - name: Enable Corepack (Yarn 4)
+        run: corepack enable
 
       - name: Cache node_modules
         id: cache
@@ -51,7 +53,7 @@ jobs:
 
       - name: Install dependencies
         if: steps.cache.outputs.cache-hit != 'true'
-        run: yarn install --frozen-lockfile
+        run: yarn install --immutable
 
   # ============================================
   # Lint All Apps
@@ -68,7 +70,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'yarn'
+
+      - name: Enable Corepack (Yarn 4)
+        run: corepack enable
 
       - name: Restore node_modules cache
         uses: actions/cache@v4
@@ -80,7 +84,7 @@ jobs:
           key: ${{ runner.os }}-node-${{ hashFiles('**/yarn.lock') }}
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: yarn install --immutable
 
       - name: Run linting
         run: yarn lint
@@ -100,7 +104,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'yarn'
+
+      - name: Enable Corepack (Yarn 4)
+        run: corepack enable
 
       - name: Restore node_modules cache
         uses: actions/cache@v4
@@ -112,7 +118,7 @@ jobs:
           key: ${{ runner.os }}-node-${{ hashFiles('**/yarn.lock') }}
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: yarn install --immutable
 
       - name: Run type checking
         run: yarn check-types
@@ -132,7 +138,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'yarn'
+
+      - name: Enable Corepack (Yarn 4)
+        run: corepack enable
 
       - name: Restore node_modules cache
         uses: actions/cache@v4
@@ -144,7 +152,7 @@ jobs:
           key: ${{ runner.os }}-node-${{ hashFiles('**/yarn.lock') }}
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: yarn install --immutable
 
       - name: Build all apps
         run: yarn build
