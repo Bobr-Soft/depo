@@ -2,7 +2,7 @@ name: Build and Release
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
     types: [opened, reopened, synchronize]
 
@@ -23,8 +23,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          # We manually enable corepack, so we let it handle yarn caching
-          cache: 'yarn'
 
       - name: Enable Corepack & Install
         run: |
@@ -61,7 +59,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'yarn'
 
       - name: Enable Corepack & Install
         run: |
