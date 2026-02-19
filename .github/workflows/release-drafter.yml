@@ -13,7 +13,7 @@ permissions:
 jobs:
   # 1. Build Android Job
   build-android:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
@@ -49,7 +49,7 @@ jobs:
 
   # 2. Build iOS Job (Unsigned for Sideloading)
   build-ios:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
     runs-on: macos-latest
     steps:
       - name: Checkout Repository
@@ -72,54 +72,38 @@ jobs:
           token: ${{ secrets.EXPO_TOKEN }}
 
       - name: Build Unsigned IPA
+        working-directory: apps/mobile
         run: |
-          # --- FIX START ---
-          # 1. Force package.json to point to index.js
-          # This tells Expo Prebuild to generate the AppDelegate using index.js
-          npm pkg set main="index.js"
+          # 1. Generate native iOS project from the mobile app root
+          npx expo prebuild --platform ios --no-install --clean
 
-          # 2. Create a Shim App.js
-          # Even with the fix above, some cache might look for App.js.
-          # We create one that simply redirects to the router.
-          echo "import 'expo-router/entry';" > App.js
-
-          # 3. Clean Install Dependencies
-          # We need to ensure the packager sees these new files
-          yarn install
-          # --- FIX END ---
-
-          # 4. Generate Native Project
-          yarn expo prebuild --platform ios --no-install --clean
-
-          # 5. Install Pods
+          # 2. Install CocoaPods
           cd ios
           pod install
 
-          # 6. Build with Explicit Entry File
-          # We explicitly set ENTRY_FILE to index.js to override any defaults
+          # 3. Build (unsigned, for sideloading)
           xcodebuild build \
-            -workspace depo.xcworkspace \
-            -scheme depo \
+            -workspace depomobile.xcworkspace \
+            -scheme depomobile \
             -configuration Release \
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
-            ENTRY_FILE=index.js \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             AD_HOC_CODE_SIGNING_ALLOWED=YES \
             -derivedDataPath build
 
-          # 7. Package
+          # 4. Package into .ipa
           mkdir -p Payload
-          cp -R build/Build/Products/Release-iphoneos/depo.app Payload/
-          zip -r ../unsigned-app.ipa Payload
+          cp -R build/Build/Products/Release-iphoneos/depomobile.app Payload/
+          zip -r unsigned-app.ipa Payload
 
       - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
         with:
           name: ios-build
-          path: unsigned-app.ipa
+          path: apps/mobile/ios/unsigned-app.ipa
 
   # 3. Update Release Draft (runs on all events)
   update-release-draft:
@@ -151,6 +135,35 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.update-release-draft.outputs.tag_name }}
+          files: |
+            android-build/*.apk
+            ios-build/*.ipa
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # 5. Upload Nightly Assets (runs only on dev branch pushes)
+  upload-nightly-assets:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    needs: [build-android, build-ios]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Build Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: '*-build'
+          merge-multiple: true
+
+      - name: Upload Nightly Pre-release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nightly
+          name: "Nightly Build"
+          body: |
+            Automated nightly build from the `dev` branch.
+            Commit: ${{ github.sha }}
+            Built: ${{ github.run_id }}
+          prerelease: true
+          make_latest: false
           files: |
             android-build/*.apk
             ios-build/*.ipa
