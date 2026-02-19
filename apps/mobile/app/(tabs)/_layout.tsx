@@ -33,26 +33,33 @@
  */
 
 import { Tabs } from "expo-router";
-import { Home, Package, User, ScanBarcode } from "@tamagui/lucide-icons";
+import { Home, Package, User, ScanBarcode, ListTodo } from "@tamagui/lucide-icons";
 import { useRouter } from "expo-router";
 import { Button } from "@repo/ui";
+import { Colors, useHeaderColors } from "@/constants";
+import { useColorScheme } from "@/hooks";
 
 export default function TabLayout() {
   const router = useRouter();
+  const colorScheme = useColorScheme();
+  const colors = Colors[colorScheme ?? "light"];
+  const { backgroundColor, textColor } = useHeaderColors();
 
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: "#007AFF",
-        headerRight: () => (
-          <Button
-            size="$3"
-            chromeless
-            icon={ScanBarcode}
-            onPress={() => router.push("/scanner")}
-            marginRight="$3"
-          />
-        ),
+        tabBarActiveTintColor: textColor,
+        tabBarInactiveTintColor: colors.textSecondary,
+        tabBarStyle: {
+          backgroundColor: backgroundColor,
+          borderTopColor: colors.border,
+        },
+        headerShown: true,
+        headerStyle: {
+          backgroundColor: backgroundColor,
+        },
+        headerTintColor: textColor,
+        headerShadowVisible: false,
       }}
     >
       <Tabs.Screen
@@ -65,8 +72,8 @@ export default function TabLayout() {
       <Tabs.Screen
         name="items"
         options={{
-          title: "Termékek",
-          tabBarIcon: ({ color }) => <Package size={24} color={color} />,
+          title: "Feladatok",
+          tabBarIcon: ({ color }) => <ListTodo size={24} color={color} />,
         }}
       />
       <Tabs.Screen

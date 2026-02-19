@@ -8,7 +8,10 @@ const app = express();
 app.use(cors({ origin: ['http://localhost:5173','https://leltar-app.vercel.app'] }));
 app.use(express.json());
 
-const JWT_SECRET = 'supersecretjwtkey';
+const JWT_SECRET = process.env.JWT_SECRET || (() => {
+  console.error('⚠️ WARNING: JWT_SECRET not set in environment variables!');
+  return 'supersecretjwtkey';
+})();
 
 // Test database connection on startup
 async function testDBConnection() {
@@ -27,6 +30,16 @@ let dbConnected = false;
 testDBConnection().then(result => {
   dbConnected = result;
 });
+
+// Input validation helpers
+function isValidEmail(email) {
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return emailRegex.test(email) && email.length <= 255;
+}
+
+function isValidString(str, maxLength = 255) {
+  return typeof str === 'string' && str.trim().length > 0 && str.length <= maxLength;
+}
 
 // Auth middleware - strict database validation with fallback
 async function authenticateJWT(req, res, next) {
@@ -66,12 +79,30 @@ async function authenticateJWT(req, res, next) {
   }
 }
 
+// Role-based access control middleware
+function requireAdmin(req, res, next) {
+  if (!req.user) {
+    return res.status(401).json({ message: 'Authentication required' });
+  }
+  
+  const userRole = req.user.role?.toLowerCase();
+  if (userRole !== 'admin') {
+    return res.status(403).json({ message: 'Admin privileges required' });
+  }
+  
+  next();
+}
+
 // Login endpoint with Entra ID and database validation
 app.post('/login', async (req, res) => {
   const { email } = req.body;
 
   if (!email) {
     return res.status(400).json({ message: 'Email required' });
+  }
+
+  if (!isValidEmail(email)) {
+    return res.status(400).json({ message: 'Invalid email format' });
   }
 
   try {
@@ -88,18 +119,39 @@ app.post('/login', async (req, res) => {
         return res.status(403).json({ message: 'Access denied: User not authorized' });
       }
 
-      const token = jwt.sign({ email, userId: rows[0].id }, JWT_SECRET, { expiresIn: '1h' });
-      res.json({ token, user: { email, id: rows[0].id } });
+      // Debug: log raw role from database
+      console.log('🔍 Raw role from DB:', rows[0].role, 'Type:', typeof rows[0].role);
+      console.log('🔍 Is Buffer?', Buffer.isBuffer(rows[0].role));
+      console.log('🔍 Full user row:', JSON.stringify(rows[0]));
+      console.log('🔍 All keys:', Object.keys(rows[0]));
+
+      // Handle both string and Buffer (MySQL enum can sometimes be returned as Buffer)
+      let rawRole = '';
+      if (rows[0].role) {
+        if (Buffer.isBuffer(rows[0].role)) {
+          rawRole = rows[0].role.toString('utf8').trim().toLowerCase();
+        } else {
+          rawRole = rows[0].role.toString().trim().toLowerCase();
+        }
+      }
+      
+      const role = rawRole ? rawRole.charAt(0).toUpperCase() + rawRole.slice(1) : 'Teacher';
+      
+      console.log('✅ Raw role (lowercase):', rawRole);
+      console.log('✅ Capitalized role:', role);
+      
+      const responseData = { token: '', user: { email, id: rows[0].id, role } };
+      const token = jwt.sign({ email, userId: rows[0].id, role }, JWT_SECRET, { expiresIn: '1h' });
+      responseData.token = token;
+      
+      console.log('📤 Sending response:', JSON.stringify(responseData));
+      res.json(responseData);
     } else {
-      // Fallback: allow login for development when database is not available
-      const token = jwt.sign({ email, userId: 1 }, JWT_SECRET, { expiresIn: '1h' });
-      res.json({ token, user: { email, id: 1 } });
+      return res.status(503).json({ message: 'Database not available' });
     }
   } catch (err) {
     console.error('❌ Database error during login:', err.message);
-    // Fallback for database errors
-    const token = jwt.sign({ email, userId: 1 }, JWT_SECRET, { expiresIn: '1h' });
-    res.json({ token, user: { email, id: 1 } });
+    return res.status(500).json({ message: 'Login failed. Please try again later.' });
   }
 });
 
@@ -138,6 +190,10 @@ app.get('/items', authenticateJWT, async (req, res) => {
 
 app.post('/items', authenticateJWT, async (req, res) => {
   const { name, barcode, description, quantity, category_id, location_id } = req.body;
+  
+  if (!isValidString(name, 255)) {
+    return res.status(400).json({ message: 'Invalid item name' });
+  }
   
   try {
     if (dbConnected) {
@@ -178,6 +234,10 @@ app.put('/items/:id', authenticateJWT, async (req, res) => {
   const { id } = req.params;
   const { name, barcode, description, quantity, category_id, location_id } = req.body;
 
+  if (!isValidString(name, 255)) {
+    return res.status(400).json({ message: 'Invalid item name' });
+  }
+
   try {
     await db.query(
       `UPDATE items 
@@ -211,7 +271,7 @@ app.put('/items/:id', authenticateJWT, async (req, res) => {
   }
 });
 
-app.delete('/items/:id', authenticateJWT, async (req, res) => {
+app.delete('/items/:id', authenticateJWT, requireAdmin, async (req, res) => {
   const { id } = req.params;
   try {
     await db.query('DELETE FROM items WHERE id=?', [id]);
@@ -223,11 +283,125 @@ app.delete('/items/:id', authenticateJWT, async (req, res) => {
 });
 
 app.get('/users', authenticateJWT, async (req, res) => {
-  if (req.user?.dbUser?.role !== 'admin') {
-    return res.status(403).json({ message: 'Access denied: Admins only' });
+  try {
+    if (dbConnected) {
+      const [rows] = await db.query('SELECT id, email, role, isActive FROM users');
+      // Add username from email and normalize role for compatibility
+      const usersWithUsername = rows.map(user => {
+        const localPart = user.email.split('@')[0];
+        const nameParts = localPart.split('.');
+        // Use second part (given name) if available, fallback to first part
+        const firstName = nameParts.length > 1 ? nameParts[1] : nameParts[0];
+        return {
+          ...user,
+          username: firstName.charAt(0).toUpperCase() + firstName.slice(1).toLowerCase(),
+          // Capitalize role: 'admin' -> 'Admin', 'teacher' -> 'Teacher'
+          role: user.role ? user.role.charAt(0).toUpperCase() + user.role.slice(1).toLowerCase() : 'Teacher'
+        };
+      });
+      res.json(usersWithUsername);
+    } else {
+      res.status(503).json({ message: 'Database not available' });
+    }
+  } catch (err) {
+    console.error('❌ Error fetching users:', err.message);
+    res.status(500).json({ message: 'Database error' });
   }
-  const [rows] = await db.query('SELECT id, email, role, isActive FROM users');
-  res.json(rows);
+});
+
+app.post('/users', authenticateJWT, requireAdmin, async (req, res) => {
+  const { email, password, role, isActive } = req.body;
+  
+  if (!isValidEmail(email)) {
+    return res.status(400).json({ message: 'Invalid email format' });
+  }
+  
+  try {
+    if (dbConnected) {
+      // Normalize role: 'Admin' -> 'admin', 'Teacher' -> 'teacher' for database
+      const normalizedRole = role ? role.toLowerCase() : 'teacher';
+      // Convert boolean to integer for MySQL (1 or 0)
+      const normalizedIsActive = isActive !== undefined ? (isActive ? 1 : 0) : 1;
+      const [result] = await db.query(
+        'INSERT INTO users (email, password, role, isActive) VALUES (?, ?, ?, ?)',
+        [email, password, normalizedRole, normalizedIsActive]
+      );
+      const [rows] = await db.query('SELECT id, email, role, isActive FROM users WHERE id = ?', [result.insertId]);
+      const localPart = rows[0].email.split('@')[0];
+      const nameParts = localPart.split('.');
+      // Use second part (given name) if available, fallback to first part
+      const firstName = nameParts.length > 1 ? nameParts[1] : nameParts[0];
+      const userWithUsername = {
+        ...rows[0],
+        username: firstName.charAt(0).toUpperCase() + firstName.slice(1).toLowerCase(),
+        // Capitalize role for frontend
+        role: rows[0].role ? rows[0].role.charAt(0).toUpperCase() + rows[0].role.slice(1).toLowerCase() : 'Teacher'
+      };
+      res.json(userWithUsername);
+    } else {
+      res.status(503).json({ message: 'Database not available' });
+    }
+  } catch (err) {
+    console.error('❌ Error creating user:', err.message);
+    res.status(500).json({ message: 'Database error' });
+  }
+});
+
+app.put('/users/:id', authenticateJWT, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const { email, role, isActive } = req.body;
+  
+  if (!isValidEmail(email)) {
+    return res.status(400).json({ message: 'Invalid email format' });
+  }
+  
+  console.log('📝 Updating user:', { id, email, role, isActive, type: typeof isActive });
+  try {
+    if (dbConnected) {
+      // Normalize role: 'Admin' -> 'admin', 'Teacher' -> 'teacher' for database
+      const normalizedRole = role ? role.toLowerCase() : 'teacher';
+      // Convert boolean to integer for MySQL (1 or 0)
+      const normalizedIsActive = isActive !== undefined ? (isActive ? 1 : 0) : 1;
+      console.log('📝 Normalized values:', { normalizedRole, normalizedIsActive });
+      const [result] = await db.query(
+        'UPDATE users SET email=?, role=?, isActive=? WHERE id=?',
+        [email, normalizedRole, normalizedIsActive, id]
+      );
+      console.log('📝 Update result:', result);
+      const [rows] = await db.query('SELECT id, email, role, isActive FROM users WHERE id = ?', [id]);
+      const localPart = rows[0].email.split('@')[0];
+      const nameParts = localPart.split('.');
+      // Use second part (given name) if available, fallback to first part
+      const firstName = nameParts.length > 1 ? nameParts[1] : nameParts[0];
+      const userWithUsername = {
+        ...rows[0],
+        username: firstName.charAt(0).toUpperCase() + firstName.slice(1).toLowerCase(),
+        // Capitalize role for frontend
+        role: rows[0].role ? rows[0].role.charAt(0).toUpperCase() + rows[0].role.slice(1).toLowerCase() : 'Teacher'
+      };
+      res.json(userWithUsername);
+    } else {
+      res.status(503).json({ message: 'Database not available' });
+    }
+  } catch (err) {
+    console.error('❌ Error updating user:', err.message);
+    res.status(500).json({ message: 'Database error' });
+  }
+});
+
+app.delete('/users/:id', authenticateJWT, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  try {
+    if (dbConnected) {
+      await db.query('DELETE FROM users WHERE id=?', [id]);
+      res.json({ message: 'User deleted successfully' });
+    } else {
+      res.status(503).json({ message: 'Database not available' });
+    }
+  } catch (err) {
+    console.error('❌ Error deleting user:', err.message);
+    res.status(500).json({ message: 'Database error' });
+  }
 });
 
 
@@ -245,12 +419,60 @@ app.get('/categories', authenticateJWT, async (req, res) => {
   }
 });
 
-app.post('/categories', authenticateJWT, async (req, res) => {
-  const { name } = req.body;
+app.post('/categories', authenticateJWT, requireAdmin, async (req, res) => {
+  const { name, description } = req.body;
+  
+  if (!isValidString(name, 255)) {
+    return res.status(400).json({ message: 'Invalid category name' });
+  }
+  
   try {
-    await db.query('INSERT INTO categories (name) VALUES (?)', [name]);
-    res.json({ message: 'Category added successfully' });
+    if (dbConnected) {
+      const [result] = await db.query('INSERT INTO categories (name, description) VALUES (?, ?)', [name, description]);
+      const [rows] = await db.query('SELECT * FROM categories WHERE id = ?', [result.insertId]);
+      res.json(rows[0]);
+    } else {
+      res.status(503).json({ message: 'Database not available' });
+    }
   } catch (err) {
+    console.error('❌ Error creating category:', err.message);
+    res.status(500).json({ message: 'Database error' });
+  }
+});
+
+app.put('/categories/:id', authenticateJWT, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const { name, description } = req.body;
+  
+  if (!isValidString(name, 255)) {
+    return res.status(400).json({ message: 'Invalid category name' });
+  }
+  
+  try {
+    if (dbConnected) {
+      await db.query('UPDATE categories SET name=?, description=? WHERE id=?', [name, description, id]);
+      const [rows] = await db.query('SELECT * FROM categories WHERE id = ?', [id]);
+      res.json(rows[0]);
+    } else {
+      res.status(503).json({ message: 'Database not available' });
+    }
+  } catch (err) {
+    console.error('❌ Error updating category:', err.message);
+    res.status(500).json({ message: 'Database error' });
+  }
+});
+
+app.delete('/categories/:id', authenticateJWT, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  try {
+    if (dbConnected) {
+      await db.query('DELETE FROM categories WHERE id=?', [id]);
+      res.json({ message: 'Category deleted successfully' });
+    } else {
+      res.status(503).json({ message: 'Database not available' });
+    }
+  } catch (err) {
+    console.error('❌ Error deleting category:', err.message);
     res.status(500).json({ message: 'Database error' });
   }
 });
@@ -269,12 +491,60 @@ app.get('/locations', authenticateJWT, async (req, res) => {
   }
 });
 
-app.post('/locations', authenticateJWT, async (req, res) => {
-  const { name } = req.body;
+app.post('/locations', authenticateJWT, requireAdmin, async (req, res) => {
+  const { name, description } = req.body;
+  
+  if (!isValidString(name, 255)) {
+    return res.status(400).json({ message: 'Invalid location name' });
+  }
+  
   try {
-    await db.query('INSERT INTO locations (name) VALUES (?)', [name]);
-    res.json({ message: 'Location added successfully' });
+    if (dbConnected) {
+      const [result] = await db.query('INSERT INTO locations (name, description) VALUES (?, ?)', [name, description]);
+      const [rows] = await db.query('SELECT * FROM locations WHERE id = ?', [result.insertId]);
+      res.json(rows[0]);
+    } else {
+      res.status(503).json({ message: 'Database not available' });
+    }
   } catch (err) {
+    console.error('❌ Error creating location:', err.message);
+    res.status(500).json({ message: 'Database error' });
+  }
+});
+
+app.put('/locations/:id', authenticateJWT, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const { name, description } = req.body;
+  
+  if (!isValidString(name, 255)) {
+    return res.status(400).json({ message: 'Invalid location name' });
+  }
+  
+  try {
+    if (dbConnected) {
+      await db.query('UPDATE locations SET name=?, description=? WHERE id=?', [name, description, id]);
+      const [rows] = await db.query('SELECT * FROM locations WHERE id = ?', [id]);
+      res.json(rows[0]);
+    } else {
+      res.status(503).json({ message: 'Database not available' });
+    }
+  } catch (err) {
+    console.error('❌ Error updating location:', err.message);
+    res.status(500).json({ message: 'Database error' });
+  }
+});
+
+app.delete('/locations/:id', authenticateJWT, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  try {
+    if (dbConnected) {
+      await db.query('DELETE FROM locations WHERE id=?', [id]);
+      res.json({ message: 'Location deleted successfully' });
+    } else {
+      res.status(503).json({ message: 'Database not available' });
+    }
+  } catch (err) {
+    console.error('❌ Error deleting location:', err.message);
     res.status(500).json({ message: 'Database error' });
   }
 });

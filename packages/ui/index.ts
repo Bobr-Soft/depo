@@ -37,7 +37,10 @@ export {
   PackagePlus,
   SearchCode,
   ScanBarcode,
-  LayoutDashboard
+  LayoutDashboard,
+  Warehouse,
+  AlertTriangle,
+  Package
 } from '@tamagui/lucide-icons'
 
 

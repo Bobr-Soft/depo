@@ -3,19 +3,12 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "dev": "node --watch index.js",
-    "start": "node index.js",
-    "lint": "echo \"No linter configured yet\"",
-    "test": "echo \"No tests configured yet\""
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": [
-    "api",
-    "express",
-    "inventory"
-  ],
-  "author": "Bobr-Soft",
-  "license": "UNLICENSED",
-  "description": "Depo inventory management API",
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
   "dependencies": {
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",

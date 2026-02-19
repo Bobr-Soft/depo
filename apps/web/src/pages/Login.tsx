@@ -8,7 +8,7 @@ import styles from '../assets/styles/Login.module.css';
 
 
 interface LoginProps {
-  onLogin: (token: string, user: { name: string; email: string; image?: string }) => void;
+  onLogin: (token: string, user: { name: string; email: string; image?: string; role?: string }) => void;
 }
 
 export const Login = ({ onLogin }: LoginProps) => {
@@ -39,12 +39,16 @@ export const Login = ({ onLogin }: LoginProps) => {
       console.log('🔄 Validating with backend...');
 
       const res = await api.post('/login', { email });
-      const { token } = res.data;
+      console.log('📥 Backend response:', res.data);
+      const { token, user: userData } = res.data;
+      console.log('📥 User data:', userData);
+      const role = userData?.role || 'Teacher';
       
       console.log('✅ Backend validation successful');
+      console.log('👤 User role:', role);
       setAuthToken(token);
       
-      onLogin(token, { name, email, image });
+      onLogin(token, { name, email, image, role });
       
     } catch (err: any) {
       console.error('❌ Login error:', err);

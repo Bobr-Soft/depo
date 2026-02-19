@@ -9,6 +9,17 @@ body {
   min-height: 100vh;
   font-family: 'Inter', 'Roboto', sans-serif;
   color: #2c3e50;
+  overflow-y: auto;
+}
+
+body::-webkit-scrollbar {
+  width: 0px;
+  background: transparent;
+}
+
+body {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }
 
 .modern-card {

@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import { 
-  Box, CircularProgress, Container, Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Dialog, DialogTitle, DialogContent, DialogActions, TextField, Button, Select, MenuItem, FormControl, InputLabel, useTheme, useMediaQuery, Checkbox} from '@mui/material';
+  Box, CircularProgress, Container, Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Dialog, DialogTitle, DialogContent, DialogActions, TextField, Button, Select, MenuItem, FormControl, InputLabel, useTheme, useMediaQuery, Checkbox, InputAdornment} from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
 import IconButton from '@mui/material/IconButton';
 import EditIcon from '@mui/icons-material/Edit';
+import SearchIcon from '@mui/icons-material/Search';
 import { api } from '../services/api';
 import AddIcon from '@mui/icons-material/Add';
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
@@ -11,6 +12,7 @@ import FileDownloadIcon from '@mui/icons-material/FileDownload';
 export interface Item {
   id: number;
   name: string;
+  barcode?: string;
   description: string;
   quantity: number;
   category_id: number;
@@ -33,7 +35,6 @@ export default function ListPage() {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const isTablet = useMediaQuery(theme.breakpoints.down('md'));
-  
   const [items, setItems] = useState<Item[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);
@@ -43,6 +44,7 @@ export default function ListPage() {
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [itemToDelete, setItemToDelete] = useState<Item | null>(null);
   const [selectedItems, setSelectedItems] = useState<number[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
   const isEditing = Boolean(currentItem?.id);
 
   // Load categories and locations
@@ -75,7 +77,7 @@ export default function ListPage() {
 
   const handleSelectAll = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.checked) {
-      setSelectedItems(items.map(item => item.id));
+      setSelectedItems(filteredItems.map(item => item.id));
     } else {
       setSelectedItems([]);
     }
@@ -122,11 +124,12 @@ export default function ListPage() {
   };  
 
   const handleExportCSV = () => {
-    const headers = ['ID', 'Név', 'Leírás', 'Mennyiség', 'Kategória', 'Hely'];
+    const headers = ['ID', 'Név','Vonalkód', 'Leírás', 'Mennyiség', 'Kategória', 'Hely'];
 
     const csvData = items.map(item => [
       item.id,
       item.name,
+      item.barcode || '',
       item.description || '',
       item.quantity,
       item.category || '',
@@ -196,6 +199,18 @@ export default function ListPage() {
     }
   };
 
+  // Filter items based on search query
+  const filteredItems = items.filter(item => {
+    if (!searchQuery) return true;
+    const query = searchQuery.toLowerCase();
+    return (
+      item.name.toLowerCase().includes(query) ||
+      item.barcode?.toLowerCase().includes(query) ||
+      item.description?.toLowerCase().includes(query) ||
+      item.category?.toLowerCase().includes(query) ||
+      item.location?.toLowerCase().includes(query)
+    );
+  });
 
   if (loading) {
     return (
@@ -210,9 +225,9 @@ export default function ListPage() {
 
   return (
 
-    <Container>
+    <Container maxWidth="xl">
       <Box sx={{ mt: 4 }}>
-        <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Box sx={{ mb: 2, display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
           <Button 
             variant="contained" 
             color="error"
@@ -222,7 +237,21 @@ export default function ListPage() {
           >
             Kijelöltek törlése ({selectedItems.length})
           </Button>
-          <Box sx={{ display: 'flex', gap: 1 }}>
+          <TextField
+            variant="outlined"
+            placeholder="Keresés..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <SearchIcon />
+                </InputAdornment>
+              ),
+            }}
+            sx={{ minWidth: '350px', maxWidth: '350px', mx: 'auto' }}
+          />
+          <Box sx={{ display: 'flex', gap: 1, marginLeft: 'auto' }}>
             <Button
               variant="outlined"
               color="primary"
@@ -241,28 +270,37 @@ export default function ListPage() {
             </Button>
           </Box>
         </Box>
-        <TableContainer component={Paper} sx={{ overflow: 'auto' }}>
-          <Table size={isMobile ? "small" : "medium"}>
+        <TableContainer component={Paper} sx={{ 
+          overflow: 'visible', 
+          px: 2,
+          '&::-webkit-scrollbar': {
+            display: 'none'
+          },
+          '-ms-overflow-style': 'none',
+          'scrollbar-width': 'none'
+        }}>
+          <Table size={isMobile ? "small" : "medium"} sx={{ '& .MuiTableCell-root': { py: 1.5 } }}>
             <TableHead>
               <TableRow>
                 <TableCell padding="checkbox">
                   <Checkbox
-                    indeterminate={selectedItems.length > 0 && selectedItems.length < items.length}
-                    checked={selectedItems.length === items.length && items.length > 0}
+                    indeterminate={selectedItems.length > 0 && selectedItems.length < filteredItems.length}
+                    checked={selectedItems.length === filteredItems.length && filteredItems.length > 0}
                     onChange={handleSelectAll}
                   />
                 </TableCell>
                 <TableCell>ID</TableCell>
                 <TableCell>Név</TableCell>
+                <TableCell>Vonalkód</TableCell>
                 {!isMobile && <TableCell>Leírás</TableCell>}
                 <TableCell align="right">Mennyiség</TableCell>
                 {!isTablet && <TableCell>Kategória</TableCell>}
                 {!isMobile && <TableCell>Hely</TableCell>}
-                <TableCell sx={{ minWidth: 110 }}></TableCell>
+                <TableCell sx={{ width: 80 }}></TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
-              {items.map((item) => (
+              {filteredItems.map((item) => (
                 <TableRow key={item.id} hover>
                   <TableCell padding="checkbox">
                     <Checkbox
@@ -293,23 +331,18 @@ export default function ListPage() {
                       )}
                     </Box>
                   </TableCell>
+                  <TableCell>{item.barcode || 'N/A'}</TableCell>
                   {!isMobile && <TableCell>{item.description}</TableCell>}
                   <TableCell align="right">{item.quantity}</TableCell>
                   {!isTablet && <TableCell>{item.category || 'N/A'}</TableCell>}
                   {!isMobile && <TableCell>{item.location || 'N/A'}</TableCell>}
-                  <TableCell>
+                  <TableCell sx={{ width: 80, textAlign: 'center', verticalAlign: 'middle' }}>
                     <IconButton 
                       onClick={() => handleEdit(item)} 
                       color="primary"
                       size={isMobile ? "small" : "medium"}
                     >
                       <EditIcon />
-                    </IconButton>
-                    <IconButton 
-                      onClick={() => handleEdit(item)} 
-                      color="primary"
-                      size={isMobile ? "small" : "medium"}
-                    >
                     </IconButton>
                   </TableCell>
                 </TableRow>
@@ -347,7 +380,7 @@ export default function ListPage() {
         maxWidth="sm"
         fullWidth
       >
-        <DialogTitle>{isEditing ? 'Szerkesztés' : 'Új hozzáadása'}</DialogTitle>
+        <DialogTitle>{isEditing ? 'Szerkesztés' : 'Új elem hozzáadása'}</DialogTitle>
         <DialogContent>
           <Box sx={{ 
             pt: 2, 
@@ -374,6 +407,13 @@ export default function ListPage() {
               fullWidth
               multiline
               rows={2}
+            />
+            <TextField
+              label="Vonalkód"
+              value={currentItem?.barcode || ''}
+              onChange={(e) => setCurrentItem(prev => prev ? {...prev, barcode: e.target.value} : null)}
+              size="medium"
+              fullWidth
             />
             <TextField
               label="Mennyiség"
@@ -416,7 +456,7 @@ export default function ListPage() {
         <DialogActions>
           <Button onClick={handleCloseModal}>Mégse</Button>
           <Button onClick={handleSave} variant="contained" color="primary">
-            {isEditing ? 'Save Changes' : 'Add Item'}
+            {isEditing ? 'Mentés' : 'Új elem hozzáadása'}
           </Button>
         </DialogActions>
       </Dialog>

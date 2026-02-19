@@ -1,5 +1,6 @@
 import * as React from 'react';
 import Typography from '@mui/material/Typography';
+import Box from '@mui/material/Box';
 import { createTheme } from '@mui/material/styles';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import {  useDemoRouter } from '@toolpad/core/internal';
@@ -19,33 +20,61 @@ import ManageLocationsPage from './ManageLocationsPage';
 import CategoriesPage from './ManageCategoriesPage'; 
 import ManageUsersPage from './ManageUsersPage';
 import ManageItemsPage from './ManageItemsPage';
-
-
-
+import AddIcon from '@mui/icons-material/Add';
+import QuickActionsPageList from './QuickActionsPageList';
+import QuickActionsPageAdd from './QuickActionsPageAdd';
+import RentingItemsPage from './RentingItemsPage';
+import ManageRentingItemsPage from './ManageRentingItemsPage';
 const NAVIGATION: Navigation = [
   {
     segment: 'overview',
-    title: 'Overview',
+    title: 'Áttekintés',
     icon: <DashboardIcon />,
   },
   {
+      segment: 'renting',
+      title: 'Kölcsönzés',
+      icon: <DashboardIcon />,
+  },
+  {    segment: 'manage-rentings',
+    title: 'Kölcsönzések kezelése',
+    icon: <DashboardIcon />,
+  },
+  {
+    segment: 'quick-actions',
+    title: 'Gyors műveletek',
+    icon: <ConstructionIcon />,
+    children: [
+      {
+        segment: 'quick-action-item-add',
+        title: 'Elem hozzáadása',
+        icon: <AddIcon />,
+      },
+      {
+        segment: 'quick-action-item-list',
+        title: 'Elemek listája',
+        icon: <ListIcon />,
+      },
+    ],
+  },
+  {
     segment: 'manage-items',
-    title: 'Manage Items',
+    title: 'Elemek kezelése',
     icon: <ConstructionIcon />,
   },
   {
     segment: 'manage-categories',
-    title: 'Manage Categories',
+    title: 'Kategóriák kezelése',
     icon: <ListIcon />,
   },
   {
     segment: 'manage-locations',
-    title: 'Manage Locations',
+    title: 'Helyszínek kezelése',
     icon: <ConstructionIcon />,
   },
   {
     segment: 'manage-users',
-    title: 'Manage Users',
+    title: 'Felhasználók kezelése',
     icon: <SupervisorAccountIcon />,
   }
 ];
@@ -82,12 +111,52 @@ const demoTheme = createTheme({
   },
 });
 
-function DemoPageContent({ pathname }: { pathname: string }) {
-   switch (pathname) {
+function DemoPageContent({ pathname, userRole }: { pathname: string; userRole: string }) {
+  const isAdmin = userRole.toLowerCase() === 'admin';
+  console.log('🚪 Route guard check - Path:', pathname, 'Role:', userRole, 'Is Admin:', isAdmin);
+  
+  // Route guard based on role
+  if (isAdmin) {
+    // Admin cannot access renting page
+    if (pathname === '/renting') {
+      return (
+        <Box sx={{ p: 3, textAlign: 'center' }}>
+          <Typography variant="h5" color="error" gutterBottom>
+            Hozzáférés megtagadva
+          </Typography>
+          <Typography variant="body1">
+            Az adminisztrátorok számára a Kölcsönzések kezelése érhető el.
+          </Typography>
+        </Box>
+      );
+    }
+  } else {
+    // Teacher can only access overview, renting and dashboard
+    const allowedPaths = ['/overview', '/renting', '/dashboard'];
+    if (!allowedPaths.includes(pathname)) {
+      return (
+        <Box sx={{ p: 3, textAlign: 'center' }}>
+          <Typography variant="h5" color="error" gutterBottom>
+            Hozzáférés megtagadva
+          </Typography>
+          <Typography variant="body1">
+            Nem jogosult ehhez az oldalhoz. Csak az Áttekintés és a Kölcsönzés elérhető tanárok számára.
+          </Typography>
+        </Box>
+      );
+    }
+  }
+
+   switch (pathname as string) {
     case '/overview':
       return (<OverviewPage />);
     case '/dashboard':
+      // Redirect to appropriate page based on role
       return (<OverviewPage />);
+    case '/renting':
+      return (<RentingItemsPage />);
+    case '/manage-rentings':
+      return (<ManageRentingItemsPage />);
     case '/manage-categories':
       return (<CategoriesPage />);
     case '/manage-items':
@@ -96,6 +165,10 @@ function DemoPageContent({ pathname }: { pathname: string }) {
       return (<ManageUsersPage />);
     case '/manage-locations':
       return (<ManageLocationsPage />);
+    case '/quick-actions/quick-action-item-add':
+      return (<QuickActionsPageAdd />);
+    case '/quick-actions/quick-action-item-list':
+      return (<QuickActionsPageList />);
     default:
       return <div>Page not found.</div>;
   }
@@ -108,6 +181,7 @@ interface DashboardProps {
     name: string;
     email: string;
     image?: string;
+    role?: string;
   };
 }
 function MyAppTitle() {
@@ -128,6 +202,30 @@ export default function Dashboard({ onLogout, user }: DashboardProps) {
     },
   });
 
+  const userRole = (user.role || 'Teacher').toString().trim();
+  console.log('👤 Dashboard loaded with user:', user);
+  console.log('👤 User role:', userRole, 'Type:', typeof userRole);
+  console.log('👤 User role lowercase:', userRole.toLowerCase());
+  console.log('👤 Is Admin?', userRole.toLowerCase() === 'admin');
+
+  // Filter navigation based on role
+  const filteredNavigation = React.useMemo(() => {
+    console.log('🔍 Filtering navigation for role:', userRole);
+    const isAdmin = userRole.toLowerCase() === 'admin';
+    if (isAdmin) {
+      // Admins see everything EXCEPT renting
+      console.log('✅ Admin detected - showing all navigation except Renting');
+      return NAVIGATION.filter(item => 
+        !('segment' in item) || item.segment !== 'renting'
+      );
+    } else {
+      // Teachers see Overview and Renting
+      console.log('👨‍🏫 Teacher detected - showing Overview and Renting');
+      return NAVIGATION.filter(item => 
+        'segment' in item && (item.segment === 'overview' || item.segment === 'renting')
+      );
+    }
+  }, [userRole]);
 
 
   const authentication = React.useMemo(
@@ -142,7 +240,7 @@ export default function Dashboard({ onLogout, user }: DashboardProps) {
     <AppProvider
       session={session}
       authentication={authentication}
-      navigation={NAVIGATION}
+      navigation={filteredNavigation}
       router={router}
       theme={demoTheme}
     >
@@ -150,12 +248,9 @@ export default function Dashboard({ onLogout, user }: DashboardProps) {
         slots={{
           appTitle: MyAppTitle
         }}
-
-
       >
-        <DemoPageContent pathname={router.pathname} />
-      </DashboardLayout>
-      
+        <DemoPageContent pathname={router.pathname} userRole={userRole} />
+      </DashboardLayout>  
     </AppProvider>
   );
 }

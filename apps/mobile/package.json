@@ -24,6 +24,7 @@
     "@tamagui/babel-plugin": "^1.126.3",
     "@tamagui/lucide-icons": "^1.126.3",
     "expo": "~54.0.32",
+    "expo-camera": "^17.0.10",
     "expo-constants": "~18.0.13",
     "expo-font": "~14.0.11",
     "expo-haptics": "~15.0.8",
