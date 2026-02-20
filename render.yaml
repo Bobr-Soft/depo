@@ -2,7 +2,7 @@ services:
   - type: web
     name: depo-api
     runtime: node
-    buildCommand: corepack enable && yarn install --immutable
+    buildCommand: yarn install --immutable
     startCommand: yarn workspace backend node index.js
     envVars:
       - key: NODE_ENV
