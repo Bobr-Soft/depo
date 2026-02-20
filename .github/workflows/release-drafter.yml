@@ -105,24 +105,46 @@ jobs:
           name: ios-build
           path: apps/mobile/ios/unsigned-app.ipa
 
-  # 3. Update Release Draft (runs on all events)
-  update-release-draft:
+  # 3. Create Release on Main Branch
+  create-release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [build-android, build-ios]
-    if: always()
     runs-on: ubuntu-latest
     outputs:
-      tag_name: ${{ steps.release_drafter.outputs.tag_name }}
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+      tag_name: ${{ steps.tag.outputs.tag_name }}
     steps:
-      - name: Draft Release Notes
-        id: release_drafter
-        uses: release-drafter/release-drafter@v6
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Generate Tag Name
+        id: tag
+        run: |
+          TAG="v$(date +%Y.%m.%d-%H%M%S)"
+          echo "tag_name=$TAG" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag_name }}
+          name: "Release ${{ steps.tag.outputs.tag_name }}"
+          body: |
+            ## Release Build
+            - iOS App (unsigned IPA)
+            - Android App (APK)
+
+            Commit: ${{ github.sha }}
+            Branch: main
+          draft: false
+          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # 4. Upload Release Assets (runs only on main branch pushes after builds complete)
+  # 4. Upload Release Assets (Main Branch)
   upload-release-assets:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [build-android, build-ios, update-release-draft]
+    needs: [build-android, build-ios, create-release]
     runs-on: ubuntu-latest
     steps:
       - name: Download Build Artifacts
@@ -134,7 +156,7 @@ jobs:
       - name: Upload Assets to Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.update-release-draft.outputs.tag_name }}
+          tag_name: ${{ needs.create-release.outputs.tag_name }}
           files: |
             android-build/*.apk
             ios-build/*.ipa
@@ -153,15 +175,52 @@ jobs:
           pattern: '*-build'
           merge-multiple: true
 
+      - name: Delete Previous Nightly Release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              const releases = await github.rest.repos.listReleases({
+                owner: context.repo.owner,
+                repo: context.repo.repo
+              });
+
+              const nightlyRelease = releases.data.find(r => r.tag_name === 'nightly');
+
+              if (nightlyRelease) {
+                // Delete the release
+                await github.rest.repos.deleteRelease({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  release_id: nightlyRelease.id
+                });
+
+                // Delete the tag
+                await github.rest.git.deleteRef({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  ref: 'tags/nightly'
+                });
+              }
+            } catch (error) {
+              console.log('No previous nightly release found');
+            }
+
       - name: Upload Nightly Pre-release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: nightly
           name: "Nightly Build"
           body: |
-            Automated nightly build from the `dev` branch.
+            ## Nightly Build
+            Latest development build from the `dev` branch.
+
+            - iOS App (unsigned IPA)
+            - Android App (APK)
+
             Commit: ${{ github.sha }}
             Built: ${{ github.run_id }}
+            Timestamp: ${{ github.event.head_commit.timestamp }}
           prerelease: true
           make_latest: false
           files: |

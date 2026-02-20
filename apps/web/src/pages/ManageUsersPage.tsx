@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { 
+import {
   Box, CircularProgress, Container, Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Dialog, DialogTitle, DialogContent, DialogActions, TextField, Button, useTheme, useMediaQuery, Checkbox, Select, MenuItem, FormControl, InputLabel
 } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -26,7 +26,6 @@ export default function ManageUsersPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [currentUser, setCurrentUser] = useState<Partial<User> | null>(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
-  const [userToDelete, setUserToDelete] = useState<User | null>(null);
   const [selectedUsers, setSelectedUsers] = useState<number[]>([]);
   const isEditing = Boolean(currentUser?.id);
 
@@ -64,7 +63,7 @@ export default function ManageUsersPage() {
 
   const handleDeleteClick = () => {
     if (selectedUsers.length === 0) return;
-    
+
     const usersToDelete = users.filter(user => selectedUsers.includes(user.id));
     const userNames = usersToDelete.map(user => user.username).join('", "');
     setUserToDelete({ id: 0, username: userNames } as User);
@@ -73,7 +72,7 @@ export default function ManageUsersPage() {
 
   const handleDeleteConfirm = async () => {
     if (selectedUsers.length === 0) return;
-    
+
     try {
       console.log(`🔄 Deleting ${selectedUsers.length} users...`);
       await Promise.all(selectedUsers.map(id => api.delete(`/users/${id}`)));
@@ -109,13 +108,13 @@ export default function ManageUsersPage() {
 
   const handleSave = async () => {
     if (!currentUser) return;
-    
+
     try {
       if (isEditing) {
         // Edit existing user
         console.log(`🔄 Saving changes for user with id: ${currentUser.id}...`);
         const response = await api.put(`/users/${currentUser.id}`, currentUser);
-        setUsers(users.map(user => 
+        setUsers(users.map(user =>
           user.id === currentUser.id ? response.data : user
         ));
         console.log(`✅ Successfully updated user with id: ${currentUser.id}`);
@@ -146,8 +145,8 @@ export default function ManageUsersPage() {
     <Container maxWidth="xl">
       <Box sx={{ mt: 4 }}>
         <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Button 
-            variant="contained" 
+          <Button
+            variant="contained"
             color="error"
             onClick={handleDeleteClick}
             startIcon={<DeleteIcon />}
@@ -155,9 +154,9 @@ export default function ManageUsersPage() {
           >
             Kijelöltek törlése ({selectedUsers.length})
           </Button>
-          <Button 
-            variant="contained" 
-            color="primary" 
+          <Button
+            variant="contained"
+            color="primary"
             onClick={handleAddClick}
             startIcon={<AddIcon />}
           >
@@ -195,14 +194,14 @@ export default function ManageUsersPage() {
                   </TableCell>
                   <TableCell>{user.id}</TableCell>
                   <TableCell>
-                    <Box sx={{ 
-                      display: 'flex', 
+                    <Box sx={{
+                      display: 'flex',
                       flexDirection: 'column',
                       gap: 0.5
                     }}>
                       {user.username}
                       {(isMobile || isTablet) && (
-                        <Box sx={{ 
+                        <Box sx={{
                           typography: 'caption',
                           color: 'text.secondary',
                           display: 'flex',
@@ -218,8 +217,8 @@ export default function ManageUsersPage() {
                   {!isTablet && <TableCell>{user.role || 'N/A'}</TableCell>}
                   {!isTablet && <TableCell>{user.isActive ? 'Igen' : 'Nem'}</TableCell>}
                   <TableCell sx={{ width: 80, textAlign: 'center', verticalAlign: 'middle' }}>
-                    <IconButton 
-                      onClick={() => handleEdit(user)} 
+                    <IconButton
+                      onClick={() => handleEdit(user)}
                       color="primary"
                       size={isMobile ? "small" : "medium"}
                     >
@@ -255,19 +254,19 @@ export default function ManageUsersPage() {
       </Dialog>
 
       {/* Edit/Add Dialog */}
-      <Dialog 
-        open={modalOpen} 
+      <Dialog
+        open={modalOpen}
         onClose={handleCloseModal}
         maxWidth="sm"
         fullWidth
       >
         <DialogTitle>{isEditing ? 'Szerkesztés' : 'Új hozzáadása'}</DialogTitle>
         <DialogContent>
-          <Box sx={{ 
-            pt: 2, 
+          <Box sx={{
+            pt: 2,
             px: 1,
-            display: 'flex', 
-            flexDirection: 'column', 
+            display: 'flex',
+            flexDirection: 'column',
             gap: 3,
             '& .MuiFormControl-root': {
               minWidth: '100%'
@@ -285,7 +284,7 @@ export default function ManageUsersPage() {
               <TextField
                 label="Jelszó"
                 type="password"
-                value={(currentUser as any)?.password || ''}
+                value={(currentUser as unknown as Partial<User & { password: string }>)?.password || ''}
                 onChange={(e) => setCurrentUser(prev => prev ? {...prev, password: e.target.value} : null)}
                 size="medium"
                 fullWidth

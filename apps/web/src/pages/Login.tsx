@@ -19,15 +19,15 @@ export const Login = ({ onLogin }: LoginProps) => {
     try {
       setError(null);
       console.log('🔄 Starting Entra ID login...');
-      
 
-      const loginResponse = await instance.loginPopup({ 
-        ...loginRequest, 
-        prompt: 'login' 
+
+      const loginResponse = await instance.loginPopup({
+        ...loginRequest,
+        prompt: 'login'
       });
       console.log('Entra ID returned username:', loginResponse.account?.username);
       console.log('Entra ID returned name:', loginResponse.account?.name);
-      
+
       const email = loginResponse.account?.username;
       if (!email) {
         throw new Error('Email not found in Entra ID response');
@@ -43,19 +43,20 @@ export const Login = ({ onLogin }: LoginProps) => {
       const { token, user: userData } = res.data;
       console.log('📥 User data:', userData);
       const role = userData?.role || 'Teacher';
-      
+
       console.log('✅ Backend validation successful');
       console.log('👤 User role:', role);
       setAuthToken(token);
-      
+
       onLogin(token, { name, email, image, role });
-      
-    } catch (err: any) {
-      console.error('❌ Login error:', err);
-      
-      if (err.response?.status === 403) {
+
+    } catch (err: unknown) {
+      const error = err as { response?: { status: number } };
+      console.error('❌ Login error:', error);
+
+      if (error.response?.status === 403) {
         setError('Access denied: Your account is not authorized to access this system. Please contact your administrator.');
-      } else if (err.response?.status === 503) {
+      } else if (error.response?.status === 503) {
         setError('System temporarily unavailable. Please try again later.');
       } else {
         setError(err.response?.data?.message || err.message || 'Login failed. Please try again.');
@@ -65,19 +66,19 @@ export const Login = ({ onLogin }: LoginProps) => {
 
   return (
     <div className={styles.loginContainer}>
-      <div style={{ position: 'absolute', 
-        top: 0, 
-        left: 0, 
-        width: '100%', 
-        height: '100%', 
+      <div style={{ position: 'absolute',
+        top: 0,
+        left: 0,
+        width: '100%',
+        height: '100%',
         zIndex: 0 }}>
-        <Plasma 
-          color="#42a4f5" 
-          speed={1.7} 
-          direction="forward" 
-          scale={0.7} 
-          opacity={1}   
-          mouseInteractive={false} 
+        <Plasma
+          color="#42a4f5"
+          speed={1.7}
+          direction="forward"
+          scale={0.7}
+          opacity={1}
+          mouseInteractive={false}
         />
       </div>
 
