@@ -1,0 +1,29 @@
+# GitHub Auto-generated Release Notes Configuration
+# Mirrors the categories defined in release-drafter.yml
+
+changelog:
+  exclude:
+    labels:
+      - ignore-for-release
+  categories:
+    - title: '🚀 Features'
+      labels:
+        - enhancement
+        - feature
+    - title: '🐛 Bug Fixes'
+      labels:
+        - bug
+        - fix
+    - title: '📚 Documentation'
+      labels:
+        - documentation
+    - title: '🧰 Maintenance'
+      labels:
+        - chore
+        - dependencies
+    - title: '⚡ Performance'
+      labels:
+        - performance
+    - title: "What's Changed"
+      labels:
+        - '*'
