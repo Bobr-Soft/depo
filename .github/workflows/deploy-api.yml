@@ -26,7 +26,8 @@ jobs:
       mysql:
         image: mysql:8.0
         env:
-          MYSQL_ROOT_PASSWORD: testpassword
+          # Ephemeral CI-only container — not a production credential
+          MYSQL_ROOT_PASSWORD: ${{ secrets.CI_TEST_DB_PASSWORD }}
           MYSQL_DATABASE: depo_test
         ports:
           - 3306:3306
@@ -58,9 +59,9 @@ jobs:
           DB_HOST: localhost
           DB_PORT: 3306
           DB_USER: root
-          DB_PASSWORD: testpassword
+          DB_PASSWORD: ${{ secrets.CI_TEST_DB_PASSWORD }}
           DB_NAME: depo_test
-          JWT_SECRET: test-secret-key
+          JWT_SECRET: ${{ secrets.CI_TEST_JWT_SECRET }}
 
   # ============================================
   # Deploy API

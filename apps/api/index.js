@@ -20,10 +20,11 @@ app.use(
 );
 app.use(express.json());
 
-const JWT_SECRET = process.env.JWT_SECRET || (() => {
-  console.error('⚠️ WARNING: JWT_SECRET not set in environment variables!');
-  return 'supersecretjwtkey';
-})();
+if (!process.env.JWT_SECRET) {
+  console.error('❌ FATAL: JWT_SECRET environment variable is not set. Refusing to start.');
+  process.exit(1);
+}
+const JWT_SECRET = process.env.JWT_SECRET;
 
 // Test database connection on startup
 async function testDBConnection() {
