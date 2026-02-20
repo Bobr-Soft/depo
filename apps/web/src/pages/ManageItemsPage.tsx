@@ -42,6 +42,7 @@ export default function ListPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [currentItem, setCurrentItem] = useState<Partial<Item> | null>(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [itemToDelete, setItemToDelete] = useState<Item | null>(null);
   const [selectedItems, setSelectedItems] = useState<number[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const isEditing = Boolean(currentItem?.id);
@@ -361,7 +362,10 @@ export default function ListPage() {
         <DialogTitle>Törlés megerősítése</DialogTitle>
         <DialogContent>
           <Box sx={{ pt: 2 }}>
-                        Are you sure you want to delete {selectedItems.length} item{selectedItems.length !== 1 ? 's' : ''}?
+            Are you sure you want to delete {selectedItems.length} item{selectedItems.length !== 1 ? 's' : ''}?
+            {itemToDelete?.name && (
+              <Box sx={{ mt: 1, fontStyle: 'italic', color: 'text.secondary' }}>"{itemToDelete.name}"</Box>
+            )}
           </Box>
         </DialogContent>
         <DialogActions>

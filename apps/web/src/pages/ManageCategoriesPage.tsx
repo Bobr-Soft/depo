@@ -22,6 +22,7 @@ export default function ManageCategoriesPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [currentCategory, setCurrentCategory] = useState<Partial<Category> | null>(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [categoryToDelete, setCategoryToDelete] = useState<Category | null>(null);
   const [selectedCategories, setSelectedCategories] = useState<number[]>([]);
   const isEditing = Boolean(currentCategory?.id);
 
@@ -216,6 +217,9 @@ export default function ManageCategoriesPage() {
         <DialogContent>
           <Box sx={{ pt: 2 }}>
             Are you sure you want to delete {selectedCategories.length} categor{selectedCategories.length !== 1 ? 'ies' : 'y'}?
+            {categoryToDelete?.name && (
+              <Box sx={{ mt: 1, fontStyle: 'italic', color: 'text.secondary' }}>"{categoryToDelete.name}"</Box>
+            )}
           </Box>
         </DialogContent>
         <DialogActions>

@@ -26,6 +26,7 @@ export default function ManageUsersPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [currentUser, setCurrentUser] = useState<Partial<User> | null>(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [userToDelete, setUserToDelete] = useState<User | null>(null);
   const [selectedUsers, setSelectedUsers] = useState<number[]>([]);
   const isEditing = Boolean(currentUser?.id);
 
@@ -243,6 +244,9 @@ export default function ManageUsersPage() {
         <DialogContent>
           <Box sx={{ pt: 2 }}>
             Are you sure you want to delete {selectedUsers.length} user{selectedUsers.length !== 1 ? 's' : ''}?
+            {userToDelete?.username && (
+              <Box sx={{ mt: 1, fontStyle: 'italic', color: 'text.secondary' }}>"{userToDelete.username}"</Box>
+            )}
           </Box>
         </DialogContent>
         <DialogActions>

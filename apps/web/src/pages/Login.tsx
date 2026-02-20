@@ -51,7 +51,7 @@ export const Login = ({ onLogin }: LoginProps) => {
       onLogin(token, { name, email, image, role });
 
     } catch (err: unknown) {
-      const error = err as { response?: { status: number } };
+      const error = err as { response?: { status: number; data?: { message: string } }; message: string };
       console.error('❌ Login error:', error);
 
       if (error.response?.status === 403) {
@@ -59,7 +59,7 @@ export const Login = ({ onLogin }: LoginProps) => {
       } else if (error.response?.status === 503) {
         setError('System temporarily unavailable. Please try again later.');
       } else {
-        setError(err.response?.data?.message || err.message || 'Login failed. Please try again.');
+        setError(error.response?.data?.message || error.message || 'Login failed. Please try again.');
       }
     }
   };
