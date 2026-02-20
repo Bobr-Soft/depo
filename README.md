@@ -1,4 +1,4 @@
-# Depo — Inventory Management System
+# Depo — Digital Ecosystem for Parts & Orders
 
 A full-stack inventory management system built as a monorepo. Includes a web dashboard, a mobile app with barcode scanning and offline support, and a REST API backend.
 
