@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { 
+import {
   Box, CircularProgress, Container, Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Dialog, DialogTitle, DialogContent, DialogActions, TextField, Button, Select, MenuItem, FormControl, InputLabel, useTheme, useMediaQuery, Checkbox, InputAdornment} from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
 import IconButton from '@mui/material/IconButton';
@@ -95,7 +95,7 @@ export default function ListPage() {
 
   const handleDeleteClick = () => {
     if (selectedItems.length === 0) return;
-    
+
     const itemsToDelete = items.filter(item => selectedItems.includes(item.id));
     const itemNames = itemsToDelete.map(item => item.name).join('", "');
     setItemToDelete({ id: 0, name: itemNames } as Item);
@@ -104,7 +104,7 @@ export default function ListPage() {
 
   const handleDeleteConfirm = async () => {
     if (selectedItems.length === 0) return;
-    
+
     try {
       console.log(`🔄 Deleting ${selectedItems.length} items...`);
       await Promise.all(selectedItems.map(id => api.delete(`/items/${id}`)));
@@ -121,7 +121,7 @@ export default function ListPage() {
   const handleDeleteCancel = () => {
     setDeleteConfirmOpen(false);
     setItemToDelete(null);
-  };  
+  };
 
   const handleExportCSV = () => {
     const headers = ['ID', 'Név','Vonalkód', 'Leírás', 'Mennyiség', 'Kategória', 'Hely'];
@@ -138,7 +138,7 @@ export default function ListPage() {
 
     const csvContent = [
       headers.join(','),
-      ...csvData.map(row => 
+      ...csvData.map(row =>
         row.map(cell => {
           const value = String(cell).replace(/"/g, '""');
           return value.includes(',') ? `"${value}"` : value;
@@ -147,11 +147,11 @@ export default function ListPage() {
     ].join('\r\n');
 
     const BOM = '\uFEFF';
-    
+
     const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
-    
+
     link.setAttribute('href', url);
     link.setAttribute('download', 'leltar_export.xls');
     document.body.appendChild(link);
@@ -176,13 +176,13 @@ export default function ListPage() {
 
   const handleSave = async () => {
     if (!currentItem) return;
-    
+
     try {
       if (isEditing) {
         // Edit existing item
         console.log(`🔄 Saving changes for item with id: ${currentItem.id}...`);
         const response = await api.put(`/items/${currentItem.id}`, currentItem);
-        setItems(items.map(item => 
+        setItems(items.map(item =>
           item.id === currentItem.id ? response.data : item
         ));
         console.log(`✅ Successfully updated item with id: ${currentItem.id}`);
@@ -228,8 +228,8 @@ export default function ListPage() {
     <Container maxWidth="xl">
       <Box sx={{ mt: 4 }}>
         <Box sx={{ mb: 2, display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
-          <Button 
-            variant="contained" 
+          <Button
+            variant="contained"
             color="error"
             onClick={handleDeleteClick}
             startIcon={<DeleteIcon />}
@@ -260,9 +260,9 @@ export default function ListPage() {
             >
               CSV Export
             </Button>
-            <Button 
-              variant="contained" 
-              color="primary" 
+            <Button
+              variant="contained"
+              color="primary"
               onClick={handleAddClick}
               startIcon={<AddIcon />}
             >
@@ -270,8 +270,8 @@ export default function ListPage() {
             </Button>
           </Box>
         </Box>
-        <TableContainer component={Paper} sx={{ 
-          overflow: 'visible', 
+        <TableContainer component={Paper} sx={{
+          overflow: 'visible',
           px: 2,
           '&::-webkit-scrollbar': {
             display: 'none'
@@ -311,14 +311,14 @@ export default function ListPage() {
                   </TableCell>
                   <TableCell>{item.id}</TableCell>
                   <TableCell>
-                    <Box sx={{ 
-                      display: 'flex', 
+                    <Box sx={{
+                      display: 'flex',
                       flexDirection: 'column',
                       gap: 0.5
                     }}>
                       {item.name}
                       {isMobile && (
-                        <Box sx={{ 
+                        <Box sx={{
                           typography: 'caption',
                           color: 'text.secondary',
                           display: 'flex',
@@ -337,8 +337,8 @@ export default function ListPage() {
                   {!isTablet && <TableCell>{item.category || 'N/A'}</TableCell>}
                   {!isMobile && <TableCell>{item.location || 'N/A'}</TableCell>}
                   <TableCell sx={{ width: 80, textAlign: 'center', verticalAlign: 'middle' }}>
-                    <IconButton 
-                      onClick={() => handleEdit(item)} 
+                    <IconButton
+                      onClick={() => handleEdit(item)}
                       color="primary"
                       size={isMobile ? "small" : "medium"}
                     >
@@ -362,7 +362,10 @@ export default function ListPage() {
         <DialogTitle>Törlés megerősítése</DialogTitle>
         <DialogContent>
           <Box sx={{ pt: 2 }}>
-                        Are you sure you want to delete {selectedItems.length} item{selectedItems.length !== 1 ? 's' : ''}?
+            Are you sure you want to delete {selectedItems.length} item{selectedItems.length !== 1 ? 's' : ''}?
+            {itemToDelete?.name && (
+              <Box sx={{ mt: 1, fontStyle: 'italic', color: 'text.secondary' }}>"{itemToDelete.name}"</Box>
+            )}
           </Box>
         </DialogContent>
         <DialogActions>
@@ -374,19 +377,19 @@ export default function ListPage() {
       </Dialog>
 
       {/* Edit/Add Dialog */}
-      <Dialog 
-        open={modalOpen} 
+      <Dialog
+        open={modalOpen}
         onClose={handleCloseModal}
         maxWidth="sm"
         fullWidth
       >
         <DialogTitle>{isEditing ? 'Szerkesztés' : 'Új elem hozzáadása'}</DialogTitle>
         <DialogContent>
-          <Box sx={{ 
-            pt: 2, 
+          <Box sx={{
+            pt: 2,
             px: 1,
-            display: 'flex', 
-            flexDirection: 'column', 
+            display: 'flex',
+            flexDirection: 'column',
             gap: 3,
             '& .MuiFormControl-root': {
               minWidth: '100%'

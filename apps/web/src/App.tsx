@@ -14,7 +14,7 @@ function App() {
   useEffect(() => {
     const savedToken = localStorage.getItem('authToken');
     const savedUser = localStorage.getItem('user');
-    
+
     if (savedToken && savedUser) {
       console.log('🔄 Restoring session...');
       console.log('💾 Saved user from localStorage:', savedUser);
@@ -22,7 +22,7 @@ function App() {
         const parsedUser = JSON.parse(savedUser);
         console.log('👤 Parsed user:', parsedUser);
         console.log('👤 User role from localStorage:', parsedUser.role);
-        
+
         // If role is missing, clear localStorage and force re-login
         if (!parsedUser.role) {
           console.warn('⚠️ No role found in saved session - clearing and forcing re-login');
@@ -31,17 +31,17 @@ function App() {
           setIsLoading(false);
           return;
         }
-        
+
         setToken(savedToken);
         setUser(parsedUser);
         setAuthToken(savedToken);
-      } catch (e) {
+      } catch {
         console.error('Failed to restore session');
         localStorage.removeItem('authToken');
         localStorage.removeItem('user');
       }
     }
-    
+
     setIsLoading(false);
   }, []);
 
@@ -68,10 +68,10 @@ function App() {
 
   if (isLoading) {
     return (
-      <div style={{ 
-        display: 'flex', 
-        justifyContent: 'center', 
-        alignItems: 'center', 
+      <div style={{
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'center',
         height: '100vh',
         flexDirection: 'column'
       }}>
@@ -88,7 +88,7 @@ function App() {
             path="/"
             element={token ? <Navigate to="/dashboard" /> : <Login onLogin={handleLogin}  />}
           />
-          
+
           <Route
             path="/dashboard"
             element={token && user ? <Dashboard onLogout={handleLogout} user={user} /> : <Navigate to="/" />}

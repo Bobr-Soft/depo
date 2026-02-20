@@ -1,7 +1,7 @@
 import * as Network from 'expo-network';
 import { TaskComplete } from '@/constants/types';
 import { getApiUrl, getToken } from './secureStorage';
-import { API_TIMEOUT } from '@/constants/config';
+import { API_TIMEOUT, RETRY_CONFIG } from '@/constants/config';
 import * as db from './database';
 import { logout } from './auth';
 
@@ -10,6 +10,26 @@ let isSyncing = false;
 function isJwtToken(token: string): boolean {
   const parts = token.split('.');
   return parts.length === 3 && parts.every((part) => part.length > 0);
+}
+
+/**
+ * Calculate delay with exponential backoff
+ */
+function getBackoffDelay(attempt: number): number {
+  const delay = Math.min(
+    RETRY_CONFIG.initialDelayMs * Math.pow(RETRY_CONFIG.backoffMultiplier, attempt - 1),
+    RETRY_CONFIG.maxDelayMs
+  );
+  // Add jitter to prevent thundering herd
+  const jitter = Math.random() * 0.1 * delay;
+  return delay + jitter;
+}
+
+/**
+ * Sleep helper for retry delays
+ */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
@@ -26,7 +46,7 @@ export async function isOnline(): Promise<boolean> {
 }
 
 /**
- * Fetch tasks from API
+ * Fetch tasks from API with retry logic
  */
 async function fetchTasksFromApi(): Promise<TaskComplete[]> {
   const [apiUrl, token] = await Promise.all([getApiUrl(), getToken()]);
@@ -43,45 +63,69 @@ async function fetchTasksFromApi(): Promise<TaskComplete[]> {
 
   console.log(`Fetching tasks from: ${apiUrl}/tasks`);
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => {
-    console.error(`Request timeout after ${API_TIMEOUT}ms to ${apiUrl}/tasks`);
-    controller.abort();
-  }, API_TIMEOUT);
+  let lastError: Error | null = null;
 
-  try {
-    const response = await fetch(`${apiUrl}/tasks`, {
-      signal: controller.signal,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-    });
+  for (let attempt = 1; attempt <= RETRY_CONFIG.maxAttempts; attempt++) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => {
+        console.error(`Request timeout after ${API_TIMEOUT}ms to ${apiUrl}/tasks (attempt ${attempt}/${RETRY_CONFIG.maxAttempts})`);
+        controller.abort();
+      }, API_TIMEOUT);
 
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => 'Unknown error');
-      if (response.status === 401 || response.status === 403) {
-        await logout();
-        await db.clearDatabase();
-        throw new Error('Unauthorized. Please log in again.');
+      const response = await fetch(`${apiUrl}/tasks`, {
+        signal: controller.signal,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => 'Unknown error');
+        if (response.status === 401 || response.status === 403) {
+          await logout();
+          await db.clearDatabase();
+          throw new Error('Unauthorized. Please log in again.');
+        }
+        // Don't retry on 4xx errors (except timeout)
+        throw new Error(`API error: ${response.status} - ${errorText}`);
       }
-      throw new Error(`API error: ${response.status} - ${errorText}`);
-    }
 
-    const data = await response.json();
-    console.log(`Successfully fetched ${data.length || 0} tasks`);
-    return data;
-  } catch (error) {
-    if (error instanceof Error) {
-      if (error.name === 'AbortError') {
-        throw new Error(`Request timeout after ${API_TIMEOUT}ms. Is backend running at ${apiUrl}?`);
+      const data = await response.json();
+      console.log(`Successfully fetched ${data.length || 0} tasks`);
+      return data;
+    } catch (error) {
+      clearTimeout(0);
+      lastError = error instanceof Error ? error : new Error('Unknown error');
+
+      // Check if error is retryable
+      const isRetryable = error instanceof Error && (
+        error.name === 'AbortError' ||
+        error.message.includes('Network') ||
+        error.message.includes('timeout') ||
+        error.message.includes('ETIMEDOUT') ||
+        error.message.includes('ECONNREFUSED')
+      );
+
+      if (isRetryable && attempt < RETRY_CONFIG.maxAttempts) {
+        const delay = getBackoffDelay(attempt);
+        console.warn(`Attempt ${attempt} failed (${lastError.message}), retrying in ${Math.round(delay)}ms...`);
+        await sleep(delay);
+        continue;
       }
-      throw new Error(`Network error: ${error.message}`);
+
+      // Last attempt or non-retryable error
+      if (lastError.name === 'AbortError') {
+        throw new Error(`Request timeout after ${API_TIMEOUT}ms. Backend at ${apiUrl} took too long to respond.`);
+      }
+      throw lastError;
     }
-    throw error;
-  } finally {
-    clearTimeout(timeoutId);
   }
+
+  throw lastError || new Error('Failed to fetch tasks after retries');
 }
 
 /**

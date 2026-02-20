@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { 
+import {
   Box, CircularProgress, Container, Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Dialog, DialogTitle, DialogContent, DialogActions, TextField, Button, useTheme, useMediaQuery, Checkbox
 } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -60,7 +60,7 @@ export default function ManageCategoriesPage() {
 
   const handleDeleteClick = () => {
     if (selectedCategories.length === 0) return;
-    
+
     const categoriesToDelete = categories.filter(category => selectedCategories.includes(category.id));
     const categoryNames = categoriesToDelete.map(category => category.name).join('", "');
     setCategoryToDelete({ id: 0, name: categoryNames } as Category);
@@ -69,7 +69,7 @@ export default function ManageCategoriesPage() {
 
   const handleDeleteConfirm = async () => {
     if (selectedCategories.length === 0) return;
-    
+
     try {
       console.log(`🔄 Deleting ${selectedCategories.length} categories...`);
       await Promise.all(selectedCategories.map(id => api.delete(`/categories/${id}`)));
@@ -105,13 +105,13 @@ export default function ManageCategoriesPage() {
 
   const handleSave = async () => {
     if (!currentCategory) return;
-    
+
     try {
       if (isEditing) {
         // Edit existing category
         console.log(`🔄 Saving changes for category with id: ${currentCategory.id}...`);
         const response = await api.put(`/categories/${currentCategory.id}`, currentCategory);
-        setCategories(categories.map(category => 
+        setCategories(categories.map(category =>
           category.id === currentCategory.id ? response.data : category
         ));
         console.log(`✅ Successfully updated category with id: ${currentCategory.id}`);
@@ -142,8 +142,8 @@ export default function ManageCategoriesPage() {
     <Container maxWidth="xl">
       <Box sx={{ mt: 4 }}>
         <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Button 
-            variant="contained" 
+          <Button
+            variant="contained"
             color="error"
             onClick={handleDeleteClick}
             startIcon={<DeleteIcon />}
@@ -151,9 +151,9 @@ export default function ManageCategoriesPage() {
           >
             Kijelöltek törlése ({selectedCategories.length})
           </Button>
-          <Button 
-            variant="contained" 
-            color="primary" 
+          <Button
+            variant="contained"
+            color="primary"
             onClick={handleAddClick}
             startIcon={<AddIcon />}
           >
@@ -191,8 +191,8 @@ export default function ManageCategoriesPage() {
                   <TableCell>{category.name}</TableCell>
                   {!isMobile && <TableCell>{category.description || 'N/A'}</TableCell>}
                   <TableCell sx={{ width: 80, textAlign: 'center', verticalAlign: 'middle' }}>
-                    <IconButton 
-                      onClick={() => handleEdit(category)} 
+                    <IconButton
+                      onClick={() => handleEdit(category)}
                       color="primary"
                       size={isMobile ? "small" : "medium"}
                     >
@@ -217,6 +217,9 @@ export default function ManageCategoriesPage() {
         <DialogContent>
           <Box sx={{ pt: 2 }}>
             Are you sure you want to delete {selectedCategories.length} categor{selectedCategories.length !== 1 ? 'ies' : 'y'}?
+            {categoryToDelete?.name && (
+              <Box sx={{ mt: 1, fontStyle: 'italic', color: 'text.secondary' }}>"{categoryToDelete.name}"</Box>
+            )}
           </Box>
         </DialogContent>
         <DialogActions>
@@ -228,19 +231,19 @@ export default function ManageCategoriesPage() {
       </Dialog>
 
       {/* Edit/Add Dialog */}
-      <Dialog 
-        open={modalOpen} 
+      <Dialog
+        open={modalOpen}
         onClose={handleCloseModal}
         maxWidth="sm"
         fullWidth
       >
         <DialogTitle>{isEditing ? 'Szerkesztés' : 'Új hozzáadása'}</DialogTitle>
         <DialogContent>
-          <Box sx={{ 
-            pt: 2, 
+          <Box sx={{
+            pt: 2,
             px: 1,
-            display: 'flex', 
-            flexDirection: 'column', 
+            display: 'flex',
+            flexDirection: 'column',
             gap: 3,
             '& .MuiFormControl-root': {
               minWidth: '100%'

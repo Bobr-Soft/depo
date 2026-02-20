@@ -27,23 +27,24 @@ export const Items = ({ onLogout }: ItemsProps) => {
         console.log('✅ API Response: Adatok betöltve' );
         setItems(res.data);
         setError(null);
-      } catch (err: any) {
-        console.error('❌ Error fetching items:', err);
-        console.error('Error response:', err.response);
-        
-        if (err.response?.status === 401 || err.response?.status === 403) {
+      } catch (err: unknown) {
+        const error = err as { response?: { status: number; data?: { message: string } }; message: string };
+        console.error('❌ Error fetching items:', error);
+        console.error('Error response:', error.response);
+
+        if (error.response?.status === 401 || error.response?.status === 403) {
           setError('Your session has expired or you no longer have access. Please log in again.');
           // Auto logout on auth error
           setTimeout(() => onLogout(), 3000);
         } else {
-          setError(err.response?.data?.message || err.message || 'Failed to load items');
+          setError(error.response?.data?.message || error.message || 'Failed to load items');
         }
       } finally {
         setLoading(false);
       }
     };
     fetchItems();
-  }, []);
+  }, [onLogout]);
 
   if (error) return (
     <div>
@@ -64,7 +65,7 @@ export const Items = ({ onLogout }: ItemsProps) => {
           Logout
         </button>
       </div>
-      
+
       <div>
         <table style={{ border: '1px solid black', borderCollapse: 'collapse' }}>
           <thead>
