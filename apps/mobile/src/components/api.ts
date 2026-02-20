@@ -1,6 +1,6 @@
 import { TaskComplete } from '@/constants';
-import { getApiUrl, getToken } from '@/services/secureStorage';
-import { API_TIMEOUT } from '@/constants/config';
+import { getToken } from '@/services/secureStorage';
+import { getTasksWithSync, forceRefresh } from '@/services/sync';
 
 const DEV_BYPASS_TOKEN = 'dev-bypass-token';
 
@@ -23,13 +23,13 @@ const DEV_MOCK_TASKS: TaskComplete[] = [
 ];
 
 /**
- * Fetches all tasks for the authenticated user.
- * API URL and JWT are read from expo-secure-store — no .env required.
+ * Fetches all tasks with offline support.
+ * Returns cached data immediately and syncs in background if online.
  * Falls back to mock data when the dev-bypass token is active.
  */
 export default async function loadTasks(): Promise<TaskComplete[]> {
   try {
-    const [apiUrl, token] = await Promise.all([getApiUrl(), getToken()]);
+    const token = await getToken();
 
     if (!token) {
       console.warn('loadTasks: no auth token in secure storage');
@@ -42,32 +42,35 @@ export default async function loadTasks(): Promise<TaskComplete[]> {
       return DEV_MOCK_TASKS;
     }
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), API_TIMEOUT);
-
-    try {
-      const response = await fetch(`${apiUrl}/tasks`, {
-        signal: controller.signal,
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error(`API error: ${response.status}`);
-      }
-
-      return await response.json();
-    } finally {
-      clearTimeout(timeoutId);
-    }
+    // Use sync service for offline-first approach
+    const { tasks } = await getTasksWithSync();
+    return tasks;
   } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      console.error('loadTasks: request timed out');
-    } else {
-      console.error('Failed to load tasks:', error);
+    console.error('Failed to load tasks:', error);
+    return [];
+  }
+}
+
+/**
+ * Force refresh tasks from server
+ */
+export async function refreshTasks(): Promise<TaskComplete[]> {
+  try {
+    const token = await getToken();
+
+    if (!token) {
+      console.warn('refreshTasks: no auth token in secure storage');
+      return [];
     }
+
+    if (token === DEV_BYPASS_TOKEN) {
+      return DEV_MOCK_TASKS;
+    }
+
+    const result = await forceRefresh();
+    return result.tasks || [];
+  } catch (error) {
+    console.error('Failed to refresh tasks:', error);
     return [];
   }
 }

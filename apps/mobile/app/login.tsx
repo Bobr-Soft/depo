@@ -2,10 +2,7 @@ import { useState } from 'react';
 import { KeyboardAvoidingView, Platform } from 'react-native';
 import { YStack, Text, Input, Button, H2, Spinner } from '@repo/ui';
 import { router } from 'expo-router';
-import { login } from '@/services/auth';
-import { setToken, setUserEmail, setUserRole } from '@/services/secureStorage';
-
-const DEV_BYPASS_EMAIL = 'hornyak.tibor@petrik.hu';
+import { login, logout } from '@/services/auth';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
@@ -22,18 +19,6 @@ export default function LoginScreen() {
     setLoading(true);
     setError(null);
 
-    // TODO: remove dev bypass once API login is stable
-    if (trimmed.toLowerCase() === DEV_BYPASS_EMAIL.toLowerCase()) {
-      await Promise.all([
-        setToken('dev-bypass-token'),
-        setUserEmail(trimmed),
-        setUserRole('admin'),
-      ]);
-      setLoading(false);
-      router.replace('/(tabs)');
-      return;
-    }
-
     const result = await login(trimmed);
 
     setLoading(false);
@@ -43,6 +28,12 @@ export default function LoginScreen() {
     } else {
       setError(result.error ?? 'Ismeretlen hiba történt.');
     }
+  }
+
+  async function handleResetAuth() {
+    await logout();
+    setError(null);
+    setEmail('');
   }
 
   return (
@@ -83,6 +74,16 @@ export default function LoginScreen() {
             pressStyle={{ scale: 0.97 }}
           >
             {loading ? <Spinner color="$color1" /> : <Text fontWeight="600" color="$color1">Bejelentkezés</Text>}
+          </Button>
+
+          <Button
+            theme="gray"
+            size="$4"
+            onPress={handleResetAuth}
+            disabled={loading}
+            pressStyle={{ scale: 0.97 }}
+          >
+            <Text fontWeight="600">Reset Auth</Text>
           </Button>
         </YStack>
       </YStack>

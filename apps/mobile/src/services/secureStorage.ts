@@ -10,7 +10,9 @@ export const STORAGE_KEYS = {
 
 export type StorageKey = (typeof STORAGE_KEYS)[keyof typeof STORAGE_KEYS];
 
-const DEFAULT_API_URL = 'http://192.168.1.100:4000';
+// Default to Render API, allow EXPO_PUBLIC_API_URL override at build time
+const DEFAULT_API_URL =
+  process.env.EXPO_PUBLIC_API_URL ?? 'https://depo-tj5n.onrender.com';
 
 // ─── Token ──────────────────────────────────────────────────────────────────
 

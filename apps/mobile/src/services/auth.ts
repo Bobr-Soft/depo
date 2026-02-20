@@ -15,6 +15,11 @@ export interface LoginResult {
   error?: string;
 }
 
+function isJwtToken(token: string): boolean {
+  const parts = token.split('.');
+  return parts.length === 3 && parts.every((part) => part.length > 0);
+}
+
 /**
  * Login with email via the API's /login endpoint.
  * On success the JWT is persisted in the device's secure enclave.
@@ -37,7 +42,14 @@ export async function login(email: string): Promise<LoginResult> {
     }
 
     const data = await response.json();
-    const token: string = data.token;
+    const token: string | undefined = data.token;
+
+    if (!token || !isJwtToken(token)) {
+      return {
+        success: false,
+        error: 'Invalid token received from server. Please try again.',
+      };
+    }
     const userEmail: string = data.user?.email ?? email;
     const userRole: string = data.user?.role ?? '';
 

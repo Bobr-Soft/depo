@@ -7199,6 +7199,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"await-lock@npm:^2.2.2":
+  version: 2.2.2
+  resolution: "await-lock@npm:2.2.2"
+  checksum: 10c0/bedf00dad44c6325a655bf3bd523ab9e1ce41023da6a8c379990c76ac1d942ac7e5301627ab84ba37917ab5247506ba429b7f6e4bf77074093f255571b9ad5ee
+  languageName: node
+  linkType: hard
+
 "aws-ssl-profiles@npm:^1.1.2":
   version: 1.1.2
   resolution: "aws-ssl-profiles@npm:1.1.2"
@@ -8585,9 +8592,11 @@ __metadata:
     expo-haptics: "npm:~15.0.8"
     expo-image: "npm:~3.0.11"
     expo-linking: "npm:~8.0.11"
+    expo-network: "npm:^8.0.8"
     expo-router: "npm:~6.0.22"
     expo-secure-store: "npm:^15.0.8"
     expo-splash-screen: "npm:~31.0.13"
+    expo-sqlite: "npm:^16.0.10"
     expo-status-bar: "npm:~3.0.9"
     expo-symbols: "npm:~1.0.8"
     expo-system-ui: "npm:~6.0.9"
@@ -9885,6 +9894,16 @@ __metadata:
   languageName: node
   linkType: hard
 
+"expo-network@npm:^8.0.8":
+  version: 8.0.8
+  resolution: "expo-network@npm:8.0.8"
+  peerDependencies:
+    expo: "*"
+    react: "*"
+  checksum: 10c0/e12e4d136dae02e22ceaf0344ed7ee053e5aed126a71e69718c91bf7161c8bc97f745eec6e794f66e60cfba44d341b4462ce2987c958671a80fc5bea85dd124d
+  languageName: node
+  linkType: hard
+
 "expo-router@npm:~6.0.22":
   version: 6.0.22
   resolution: "expo-router@npm:6.0.22"
@@ -9971,6 +9990,19 @@ __metadata:
   peerDependencies:
     expo: "*"
   checksum: 10c0/f2caf9ac41f35f4790ca8cbdecec7f5b453d95f2a31261bb4117c5bb0515547704568998e3c1dfbbad55dc41ec8d1221288a69d2a4a943c4cf4681f5b213e860
+  languageName: node
+  linkType: hard
+
+"expo-sqlite@npm:^16.0.10":
+  version: 16.0.10
+  resolution: "expo-sqlite@npm:16.0.10"
+  dependencies:
+    await-lock: "npm:^2.2.2"
+  peerDependencies:
+    expo: "*"
+    react: "*"
+    react-native: "*"
+  checksum: 10c0/7d686aa7305071d02a914d11581c763f83cd32c0c04b6a46852c458b81f96e2cbef4178e4526450b14a8bd684be7889ed8445e06cca038005082425b2900267f
   languageName: node
   linkType: hard
 

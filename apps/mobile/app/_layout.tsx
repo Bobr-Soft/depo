@@ -6,6 +6,8 @@ import { useEffect } from "react";
 import "react-native-reanimated";
 import { useHeaderStyles } from "@/constants";
 import { isAuthenticated } from "@/services/auth";
+import { initializeSyncService, cleanupSyncService } from "@/services/sync";
+import { useAutoSync } from "@/hooks";
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
@@ -13,16 +15,33 @@ SplashScreen.preventAutoHideAsync();
 export default function RootLayout() {
   const headerStyles = useHeaderStyles();
 
+  // Auto-sync on network reconnection
+  useAutoSync();
+
   useEffect(() => {
     async function init() {
       const authed = await isAuthenticated();
       if (!authed) {
         router.replace('/login');
+      } else {
+        // Initialize sync service for authenticated users
+        try {
+          await initializeSyncService();
+        } catch (error) {
+          console.error('Failed to initialize sync service:', error);
+        }
       }
       const timer = setTimeout(() => SplashScreen.hideAsync(), 100);
       return () => clearTimeout(timer);
     }
     init();
+
+    // Cleanup on unmount
+    return () => {
+      cleanupSyncService().catch((error) => {
+        console.error('Failed to cleanup sync service:', error);
+      });
+    };
   }, []);
 
   return (

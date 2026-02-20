@@ -1,11 +1,48 @@
-import { StyleSheet, ScrollView, View, Text } from 'react-native';
-import { Card } from '@/components';
+import { StyleSheet, ScrollView } from 'react-native';
+import { Card, Button, Text, View } from '@/components';
 import { Spacing, APP_NAME, APP_VERSION, Colors, Shadows, BorderRadius } from '@/constants';
-import { useColorScheme } from '@/hooks';
+import { useColorScheme, useSyncStatus } from '@/hooks';
+import { useEffect, useState } from 'react';
+import { getApiUrl, getUserEmail, getUserRole } from '@/services/secureStorage';
+import { cleanupSyncService } from '@/services/sync';
+import { logout } from '@/services/auth';
+import { router } from 'expo-router';
 
 export default function ProfileScreen() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme];
+  const syncStatus = useSyncStatus();
+  const [email, setEmail] = useState<string>('');
+  const [role, setRole] = useState<string>('');
+  const [apiUrl, setApiUrl] = useState<string>('');
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    async function loadProfile() {
+      const [storedEmail, storedRole, storedApiUrl] = await Promise.all([
+        getUserEmail(),
+        getUserRole(),
+        getApiUrl(),
+      ]);
+
+      setEmail(storedEmail ?? '');
+      setRole(storedRole ?? '');
+      setApiUrl(storedApiUrl ?? '');
+    }
+
+    loadProfile();
+  }, []);
+
+  async function handleLogout() {
+    setLoading(true);
+    try {
+      await cleanupSyncService();
+      await logout();
+      router.replace('/login');
+    } finally {
+      setLoading(false);
+    }
+  }
 
   return (
     <View style={styles.container}>
@@ -13,35 +50,45 @@ export default function ProfileScreen() {
         <View style={styles.header}>
           <View style={[styles.avatar, { backgroundColor: colors.primary, ...Shadows.md }]}>
             <Text style={styles.avatarText}>
-              U
+              {email ? email.charAt(0).toUpperCase() : 'U'}
             </Text>
           </View>
-          <Text style={styles.heading}>User Name</Text>
-          <Text style={styles.email}>
-            user@example.com
-          </Text>
+          <Text style={styles.heading}>{email || 'User'}</Text>
+          <Text style={styles.email}>{email || 'No email available'}</Text>
         </View>
 
         <Card variant="elevated">
-          <Text style={styles.sectionTitle}>
-            ⚙️ Settings
-          </Text>
+          <Text style={styles.sectionTitle}>⚙️ Account</Text>
           <View style={styles.settingsList}>
             <View style={styles.settingItem}>
               <View style={styles.settingLeft}>
-                <Text>🌓 Theme</Text>
+                <Text>Role</Text>
               </View>
-              <Text style={styles.settingValue}>
-                System
-              </Text>
+              <Text style={styles.settingValue}>{role || 'Unknown'}</Text>
             </View>
             <View style={styles.divider} />
             <View style={styles.settingItem}>
               <View style={styles.settingLeft}>
-                <Text>🔔 Notifications</Text>
+                <Text>API URL</Text>
+              </View>
+              <Text style={styles.settingValue}>{apiUrl || 'Not set'}</Text>
+            </View>
+            <View style={styles.divider} />
+            <View style={styles.settingItem}>
+              <View style={styles.settingLeft}>
+                <Text>Online</Text>
+              </View>
+              <Text style={styles.settingValue}>{syncStatus.isOnline ? 'Yes' : 'No'}</Text>
+            </View>
+            <View style={styles.divider} />
+            <View style={styles.settingItem}>
+              <View style={styles.settingLeft}>
+                <Text>Last sync</Text>
               </View>
               <Text style={styles.settingValue}>
-                Enabled
+                {syncStatus.lastSyncTime
+                  ? new Date(syncStatus.lastSyncTime).toLocaleString()
+                  : 'Never'}
               </Text>
             </View>
           </View>
@@ -64,6 +111,18 @@ export default function ProfileScreen() {
                 {APP_VERSION}
               </Text>
             </View>
+          </View>
+        </Card>
+
+        <Card variant="elevated">
+          <Text style={styles.sectionTitle}>Session</Text>
+          <View style={styles.actions}>
+            <Button
+              title="Logout"
+              variant="outline"
+              onPress={handleLogout}
+              disabled={loading}
+            />
           </View>
         </Card>
       </ScrollView>
@@ -130,6 +189,8 @@ const styles = StyleSheet.create({
   },
   settingValue: {
     opacity: 0.5,
+    flexShrink: 1,
+    textAlign: 'right',
   },
   divider: {
     height: 1,
@@ -145,5 +206,8 @@ const styles = StyleSheet.create({
     opacity: 0.5,
     textTransform: 'uppercase',
     fontSize: 11,
+  },
+  actions: {
+    gap: Spacing.md,
   },
 });

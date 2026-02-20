@@ -6,7 +6,18 @@ const { getTasksForUser } = require('./tasks');
 require('dotenv').config();
 
 const app = express();
-app.use(cors({ origin: ['http://localhost:5173','https://leltar-app.vercel.app', 'http://192.168.1.100:4000'] }));
+// Use CORS_ORIGINS env var (comma-separated). Fallback to open CORS for dev.
+const corsOrigins = process.env.CORS_ORIGINS
+  ? process.env.CORS_ORIGINS.split(',').map((origin) => origin.trim())
+  : null;
+
+app.use(
+  cors(
+    corsOrigins
+      ? { origin: corsOrigins, credentials: true }
+      : { origin: true, credentials: true }
+  )
+);
 app.use(express.json());
 
 const JWT_SECRET = process.env.JWT_SECRET || (() => {
@@ -566,7 +577,7 @@ app.get('/tasks', authenticateJWT, async (req, res) => {
   }
 });
 
-const PORT = 4000;
+const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
-  console.log(`✅ Server running on http://localhost:${PORT}`);
+  console.log(`✅ Server running on port ${PORT}`);
 });
