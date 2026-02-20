@@ -41,11 +41,16 @@ jobs:
           npx expo prebuild --platform android
           cd android
           ./gradlew assembleRelease
+      - name: Copy APK to output
+        run: |
+          mkdir -p out
+          cp apps/mobile/android/app/build/outputs/apk/release/*.apk out/depo.apk
+
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: android-build
-          path: apps/mobile/android/app/build/outputs/apk/release/*.apk
+          path: out/depo.apk
 
   # 2. Build iOS Job (Unsigned for Sideloading)
   build-ios:
@@ -98,12 +103,14 @@ jobs:
           mkdir -p Payload
           cp -R build/Build/Products/Release-iphoneos/depomobile.app Payload/
           zip -r unsigned-app.ipa Payload
+          mkdir -p ${{ github.workspace }}/out
+          cp unsigned-app.ipa ${{ github.workspace }}/out/depo.ipa
 
       - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
         with:
           name: ios-build
-          path: apps/mobile/ios/unsigned-app.ipa
+          path: out/depo.ipa
 
   # 3. Create Release on Main Branch
   create-release:
@@ -147,11 +154,17 @@ jobs:
     needs: [build-android, build-ios, create-release]
     runs-on: ubuntu-latest
     steps:
-      - name: Download Build Artifacts
+      - name: Download Android Artifact
         uses: actions/download-artifact@v4
         with:
-          pattern: '*-build'
-          merge-multiple: true
+          name: android-build
+          path: android-build
+
+      - name: Download iOS Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ios-build
+          path: ios-build
 
       - name: Upload Assets to Release
         uses: softprops/action-gh-release@v2
@@ -169,11 +182,17 @@ jobs:
     needs: [build-android, build-ios]
     runs-on: ubuntu-latest
     steps:
-      - name: Download Build Artifacts
+      - name: Download Android Artifact
         uses: actions/download-artifact@v4
         with:
-          pattern: '*-build'
-          merge-multiple: true
+          name: android-build
+          path: android-build
+
+      - name: Download iOS Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ios-build
+          path: ios-build
 
       - name: Delete Previous Nightly Release
         uses: actions/github-script@v7
