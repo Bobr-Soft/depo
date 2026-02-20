@@ -1,135 +1,140 @@
-# Turborepo starter
+# Depo — Inventory Management System
 
-This Turborepo starter is maintained by the Turborepo core team.
+A full-stack inventory management system built as a monorepo. Includes a web dashboard, a mobile app with barcode scanning and offline support, and a REST API backend.
 
-## Using this example
+## Apps
 
-Run the following command:
+| App | Stack | Description |
+|---|---|---|
+| `apps/api` | Node.js · Express · MySQL | REST API with JWT authentication, deployed on Render |
+| `apps/web` | React 19 · Vite · Material UI | Admin web dashboard |
+| `apps/mobile` | Expo · React Native · Tamagui | Mobile app for iOS & Android with offline-first sync |
+
+## Features
+
+### Web dashboard (`apps/web`)
+- Inventory: browse, search, add, edit, delete items with barcode support
+- Manage categories, locations, users (admin-only)
+- Renting items workflow
+- Quick actions (batch add/list)
+- CSV export
+- Overview and dashboard pages
+- Azure AD / MSAL authentication
+
+### Mobile app (`apps/mobile`)
+- Barcode scanner for fast item lookup
+- Picking workflow (create, list, and complete picking tasks)
+- Offline-first: data is cached in a local SQLite database and synced when back online
+- Automatic retry with exponential backoff for Render cold starts (up to 90s timeout, 3 attempts)
+- Secure token storage via `expo-secure-store`
+- Dark/light mode (automatic)
+
+### API (`apps/api`)
+- JWT-based authentication (1h token expiry)
+- Role-based access control (`admin` / `user`)
+- Endpoints: `/auth`, `/items`, `/categories`, `/locations`, `/users`, `/tasks`
+- Graceful degradation when DB is unreachable
+- Input validation on all write endpoints
+
+## Packages
+
+| Package | Description |
+|---|---|
+| `@repo/ui` | Shared Tamagui component library used by the mobile app |
+| `@repo/eslint-config` | Shared ESLint configs |
+| `@repo/typescript-config` | Shared `tsconfig.json` bases |
+
+## Prerequisites
+
+- Node.js 18+
+- Yarn 4 (`corepack enable`)
+- A MySQL 8 database
+- [EAS CLI](https://docs.expo.dev/eas/) for mobile builds (`npm i -g eas-cli`)
+
+## Getting started
 
 ```sh
-npx create-turbo@latest
+# Install all dependencies
+yarn install
+
+# Run everything in development (web + api)
+yarn dev
+
+# Build all apps
+yarn build
+
+# Lint all apps
+yarn lint
 ```
 
-## What's inside?
+### API environment variables
 
-This Turborepo includes the following packages/apps:
+Create `apps/api/.env`:
 
-### Apps and Packages
-
-- `docs`: a [Next.js](https://nextjs.org/) app
-- `web`: another [Next.js](https://nextjs.org/) app
-- `@repo/ui`: a stub React component library shared by both `web` and `docs` applications
-- `@repo/eslint-config`: `eslint` configurations (includes `eslint-config-next` and `eslint-config-prettier`)
-- `@repo/typescript-config`: `tsconfig.json`s used throughout the monorepo
-
-Each package/app is 100% [TypeScript](https://www.typescriptlang.org/).
-
-### Utilities
-
-This Turborepo has some additional tools already setup for you:
-
-- [TypeScript](https://www.typescriptlang.org/) for static type checking
-- [ESLint](https://eslint.org/) for code linting
-- [Prettier](https://prettier.io) for code formatting
-
-### Build
-
-To build all apps and packages, run the following command:
-
-```
-cd my-turborepo
-
-# With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended)
-turbo build
-
-# Without [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation), use your package manager
-npx turbo build
-yarn dlx turbo build
-pnpm exec turbo build
+```env
+DB_HOST=your-db-host
+DB_USER=your-db-user
+DB_PASSWORD=your-db-password
+DB_NAME=your-db-name
+JWT_SECRET=your-strong-random-secret
+PORT=4000
+CORS_ORIGINS=http://localhost:5173,https://your-web-app.com
 ```
 
-You can build a specific package by using a [filter](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters):
+> The API will **refuse to start** if `JWT_SECRET` is not set.
 
-```
-# With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended)
-turbo build --filter=docs
+### Web environment variables
 
-# Without [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation), use your package manager
-npx turbo build --filter=docs
-yarn exec turbo build --filter=docs
-pnpm exec turbo build --filter=docs
+Create `apps/web/.env`:
+
+```env
+VITE_API_URL=http://localhost:4000
 ```
 
-### Develop
+### Mobile
 
-To develop all apps and packages, run the following command:
+The API URL is configured at runtime inside the app (stored in `expo-secure-store`), so no build-time env var is required. On first launch, enter the API URL on the profile/settings screen.
 
-```
-cd my-turborepo
+## Mobile builds
 
-# With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended)
-turbo dev
+Builds are handled by [EAS Build](https://docs.expo.dev/build/introduction/) (Expo Application Services):
 
-# Without [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation), use your package manager
-npx turbo dev
-yarn exec turbo dev
-pnpm exec turbo dev
-```
+```sh
+# Preview build (both platforms)
+yarn workspace depo-mobile build:all
 
-You can develop a specific package by using a [filter](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters):
+# Android only
+yarn workspace depo-mobile build:android
 
-```
-# With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended)
-turbo dev --filter=web
-
-# Without [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation), use your package manager
-npx turbo dev --filter=web
-yarn exec turbo dev --filter=web
-pnpm exec turbo dev --filter=web
+# iOS only
+yarn workspace depo-mobile build:ios
 ```
 
-### Remote Caching
+## CI/CD
 
-> [!TIP]
-> Vercel Remote Cache is free for all plans. Get started today at [vercel.com](https://vercel.com/signup?/signup?utm_source=remote-cache-sdk&utm_campaign=free_remote_cache).
+GitHub Actions workflows in `.github/workflows/`:
 
-Turborepo can use a technique known as [Remote Caching](https://turborepo.dev/docs/core-concepts/remote-caching) to share cache artifacts across machines, enabling you to share build caches with your team and CI/CD pipelines.
+| Workflow | Trigger | What it does |
+|---|---|---|
+| `deploy-api.yml` | Push to `main` (api changes) | Runs tests, deploys API to Render |
+| `release-drafter.yml` | Push to `main` / `dev` | Builds iOS & Android via EAS, attaches APK/IPA to GitHub release; `dev` pushes create a rolling `nightly` pre-release |
 
-By default, Turborepo will cache locally. To enable Remote Caching you will need an account with Vercel. If you don't have an account you can [create one](https://vercel.com/signup?utm_source=turborepo-examples), then enter the following commands:
+## Deployment
 
-```
-cd my-turborepo
+The API is deployed on [Render](https://render.com) (free tier). Environment variables (`DB_HOST`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `JWT_SECRET`, `CORS_ORIGINS`) are configured in the Render dashboard — there is no `render.yaml` in this repo.
 
-# With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended)
-turbo login
+> **Note:** Render's free tier spins down after inactivity. The mobile app handles cold starts automatically with a 90-second timeout and retry logic.
 
-# Without [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation), use your package manager
-npx turbo login
-yarn exec turbo login
-pnpm exec turbo login
-```
-
-This will authenticate the Turborepo CLI with your [Vercel account](https://vercel.com/docs/concepts/personal-accounts/overview).
-
-Next, you can link your Turborepo to your Remote Cache by running the following command from the root of your Turborepo:
+## Project structure
 
 ```
-# With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended)
-turbo link
-
-# Without [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation), use your package manager
-npx turbo link
-yarn exec turbo link
-pnpm exec turbo link
+depo/
+├── apps/
+│   ├── api/          # Express REST API
+│   ├── mobile/       # Expo React Native app
+│   └── web/          # React + Vite web dashboard
+└── packages/
+    ├── ui/           # Shared Tamagui components
+    ├── eslint-config/
+    └── typescript-config/
 ```
-
-## Useful Links
-
-Learn more about the power of Turborepo:
-
-- [Tasks](https://turborepo.dev/docs/crafting-your-repository/running-tasks)
-- [Caching](https://turborepo.dev/docs/crafting-your-repository/caching)
-- [Remote Caching](https://turborepo.dev/docs/core-concepts/remote-caching)
-- [Filtering](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters)
-- [Configuration Options](https://turborepo.dev/docs/reference/configuration)
-- [CLI Usage](https://turborepo.dev/docs/reference/command-line-reference)
