@@ -3,7 +3,7 @@ import { TaskComplete } from '@/constants/types';
 import { getApiUrl, getToken } from './secureStorage';
 import { API_TIMEOUT, RETRY_CONFIG } from '@/constants/config';
 import * as db from './database';
-import { logout } from './auth';
+import { logout, reauthenticateSilently } from './auth';
 
 let isSyncing = false;
 
@@ -49,16 +49,30 @@ export async function isOnline(): Promise<boolean> {
  * Fetch tasks from API with retry logic
  */
 async function fetchTasksFromApi(): Promise<TaskComplete[]> {
-  const [apiUrl, token] = await Promise.all([getApiUrl(), getToken()]);
+  const [apiUrl, storedToken] = await Promise.all([getApiUrl(), getToken()]);
+  let token = storedToken;
+  let hasReauthenticated = false;
 
   if (!token || !apiUrl) {
     throw new Error('Missing API URL or token');
   }
 
   if (!isJwtToken(token)) {
-    await logout();
-    await db.clearDatabase();
-    throw new Error('Invalid token. Please log in again.');
+    const reauthResult = await reauthenticateSilently();
+    if (!reauthResult.success) {
+      await logout();
+      await db.clearDatabase();
+      throw new Error(reauthResult.error ?? 'Invalid token. Please log in again.');
+    }
+
+    token = reauthResult.token ?? await getToken();
+    hasReauthenticated = true;
+
+    if (!token || !isJwtToken(token)) {
+      await logout();
+      await db.clearDatabase();
+      throw new Error('Failed to renew token. Please log in again.');
+    }
   }
 
   console.log(`Fetching tasks from: ${apiUrl}/tasks`);
@@ -86,6 +100,19 @@ async function fetchTasksFromApi(): Promise<TaskComplete[]> {
       if (!response.ok) {
         const errorText = await response.text().catch(() => 'Unknown error');
         if (response.status === 401 || response.status === 403) {
+          if (!hasReauthenticated) {
+            const reauthResult = await reauthenticateSilently();
+            if (reauthResult.success) {
+              const refreshedToken = reauthResult.token ?? await getToken();
+              if (refreshedToken && isJwtToken(refreshedToken)) {
+                token = refreshedToken;
+                hasReauthenticated = true;
+                console.log('Retrying /tasks request after silent re-authentication...');
+                continue;
+              }
+            }
+          }
+
           await logout();
           await db.clearDatabase();
           throw new Error('Unauthorized. Please log in again.');
@@ -268,6 +295,16 @@ export async function getSyncStatus(): Promise<{
   pendingOperations: number;
 }> {
   const online = await isOnline();
+
+  if (!db.isDatabaseInitialized()) {
+    return {
+      isSyncing,
+      isOnline: online,
+      lastSyncTime: null,
+      pendingOperations: 0,
+    };
+  }
+
   const lastSync = await db.getLastSyncTime();
 
   return {

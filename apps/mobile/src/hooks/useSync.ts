@@ -21,12 +21,18 @@ export function useSyncStatus() {
   });
 
   const updateStatus = async () => {
-    const syncStatus = await getSyncStatus();
-    setStatus(syncStatus);
+    try {
+      const syncStatus = await getSyncStatus();
+      setStatus(syncStatus);
+    } catch (error) {
+      console.error('Failed to update sync status:', error);
+    }
   };
 
   useEffect(() => {
-    updateStatus();
+    updateStatus().catch((error) => {
+      console.error('Initial sync status update failed:', error);
+    });
 
     // Update status every 10 seconds
     const interval = setInterval(updateStatus, 10000);

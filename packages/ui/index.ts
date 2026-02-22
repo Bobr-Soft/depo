@@ -40,7 +40,10 @@ export {
   LayoutDashboard,
   Warehouse,
   AlertTriangle,
-  Package
+  Package,
+  ClipboardX,
+  ClipboardCheck,
+  Box
 } from '@tamagui/lucide-icons'
 
 

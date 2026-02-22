@@ -553,6 +553,10 @@ export async function clearDatabase(): Promise<void> {
  * Get last sync timestamp
  */
 export async function getLastSyncTime(): Promise<number | null> {
+  if (!isDatabaseInitialized()) {
+    return null;
+  }
+
   const database = getDb();
 
   try {

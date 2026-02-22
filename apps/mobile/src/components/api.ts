@@ -51,6 +51,24 @@ export default async function loadTasks(): Promise<TaskComplete[]> {
   }
 }
 
+/** Loads a single task by ID. Uses loadTasks under the hood, so it benefits from caching and dev bypass.
+ */
+
+export async function loadTask(id: number): Promise<TaskComplete | null> {
+  try {
+    const tasks = await loadTasks();
+    const task = tasks.find((t) => t.id === id);
+    if (!task) {
+      console.warn(`Task with id ${id} not found in loaded tasks`);
+      return null;
+    }
+    return task;
+  } catch (error) {
+    console.error('Failed to load task:', error);
+    return null;
+  }
+}
+
 /**
  * Force refresh tasks from server
  */
