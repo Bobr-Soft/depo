@@ -3,7 +3,8 @@ import { TaskComplete } from '@/constants/types';
 import { getApiUrl, getToken } from './secureStorage';
 import { API_TIMEOUT, RETRY_CONFIG } from '@/constants/config';
 import * as db from './database';
-import { logout } from './auth';
+import { markItemAsPicked } from './database';
+import { logout, reauthenticateSilently } from './auth';
 
 let isSyncing = false;
 
@@ -49,16 +50,30 @@ export async function isOnline(): Promise<boolean> {
  * Fetch tasks from API with retry logic
  */
 async function fetchTasksFromApi(): Promise<TaskComplete[]> {
-  const [apiUrl, token] = await Promise.all([getApiUrl(), getToken()]);
+  const [apiUrl, storedToken] = await Promise.all([getApiUrl(), getToken()]);
+  let token = storedToken;
+  let hasReauthenticated = false;
 
   if (!token || !apiUrl) {
     throw new Error('Missing API URL or token');
   }
 
   if (!isJwtToken(token)) {
-    await logout();
-    await db.clearDatabase();
-    throw new Error('Invalid token. Please log in again.');
+    const reauthResult = await reauthenticateSilently();
+    if (!reauthResult.success) {
+      await logout();
+      await db.clearDatabase();
+      throw new Error(reauthResult.error ?? 'Invalid token. Please log in again.');
+    }
+
+    token = reauthResult.token ?? await getToken();
+    hasReauthenticated = true;
+
+    if (!token || !isJwtToken(token)) {
+      await logout();
+      await db.clearDatabase();
+      throw new Error('Failed to renew token. Please log in again.');
+    }
   }
 
   console.log(`Fetching tasks from: ${apiUrl}/tasks`);
@@ -86,6 +101,19 @@ async function fetchTasksFromApi(): Promise<TaskComplete[]> {
       if (!response.ok) {
         const errorText = await response.text().catch(() => 'Unknown error');
         if (response.status === 401 || response.status === 403) {
+          if (!hasReauthenticated) {
+            const reauthResult = await reauthenticateSilently();
+            if (reauthResult.success) {
+              const refreshedToken = reauthResult.token ?? await getToken();
+              if (refreshedToken && isJwtToken(refreshedToken)) {
+                token = refreshedToken;
+                hasReauthenticated = true;
+                console.log('Retrying /tasks request after silent re-authentication...');
+                continue;
+              }
+            }
+          }
+
           await logout();
           await db.clearDatabase();
           throw new Error('Unauthorized. Please log in again.');
@@ -126,6 +154,83 @@ async function fetchTasksFromApi(): Promise<TaskComplete[]> {
   }
 
   throw lastError || new Error('Failed to fetch tasks after retries');
+}
+
+/**
+ * Push pending sync queue operations to API
+ */
+async function pushSyncQueue(token: string, apiUrl: string): Promise<void> {
+  const queue = await db.getSyncQueue();
+  if (queue.length === 0) {
+    return;
+  }
+
+  console.log(`Processing ${queue.length} pending sync operations...`);
+
+  for (const operation of queue) {
+    try {
+      const payload = JSON.parse(operation.payload);
+
+      if (operation.entity_type === 'task_item' && operation.operation === 'UPDATE') {
+        const { picked_quantity } = payload;
+        const taskItemId = operation.entity_id;
+
+        const taskItemDetails = await db.getTaskItemDetails(taskItemId);
+
+        if (!taskItemDetails) {
+          console.warn(`Task item ${taskItemId} not found, removing from queue`);
+          await db.removeSyncOperation(operation.id);
+          continue;
+        }
+
+        const { task_id, item_id } = taskItemDetails;
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), API_TIMEOUT);
+
+        try {
+          const response = await fetch(
+            `${apiUrl}/tasks/${task_id}/items/${item_id}/picked`,
+            {
+              method: 'PUT',
+              signal: controller.signal,
+              headers: {
+                Authorization: `Bearer ${token}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ pickedQuantity: picked_quantity }),
+            }
+          );
+
+          clearTimeout(timeoutId);
+
+          if (!response.ok) {
+            const errorText = await response.text().catch(() => 'Unknown error');
+            if (response.status === 401 || response.status === 403) {
+              console.error(`Auth error: ${response.status} - ${errorText}`);
+              throw new Error('Unauthorized');
+            }
+            throw new Error(`API error: ${response.status} - ${errorText}`);
+          }
+
+          console.log(`✅ Synced task_item ${taskItemId} to server`);
+          await db.removeSyncOperation(operation.id);
+        } catch (apiError) {
+          clearTimeout(timeoutId);
+          console.warn(
+            `⚠️  Failed to push operation ${operation.id} (attempt ${operation.retry_count + 1}):`,
+            apiError instanceof Error ? apiError.message : 'Unknown error'
+          );
+          await db.incrementSyncRetry(operation.id);
+        }
+      } else {
+        console.warn(`Unsupported sync operation: ${operation.entity_type} ${operation.operation}`);
+        await db.removeSyncOperation(operation.id);
+      }
+    } catch (parseError) {
+      console.error(`Failed to parse sync operation ${operation.id}:`, parseError);
+      await db.removeSyncOperation(operation.id);
+    }
+  }
 }
 
 /**
@@ -172,6 +277,13 @@ export async function syncData(): Promise<{
 
   try {
     console.log('Starting sync...');
+
+    const [apiUrl, token] = await Promise.all([getApiUrl(), getToken()]);
+    if (!token || !apiUrl) {
+      throw new Error('Missing API URL or token for sync');
+    }
+
+    await pushSyncQueue(token, apiUrl);
 
     const tasks = await pullRemoteData();
 
@@ -244,11 +356,9 @@ export async function forceRefresh(): Promise<{
 export function startAutoSync(): void {
   console.log('Starting auto-sync...');
 
-  setTimeout(() => {
-    syncData().catch((error) => {
-      console.error('Initial sync failed:', error);
-    });
-  }, 1000);
+  syncData().catch((error) => {
+    console.error('Initial sync failed:', error);
+  });
 }
 
 /**
@@ -268,6 +378,16 @@ export async function getSyncStatus(): Promise<{
   pendingOperations: number;
 }> {
   const online = await isOnline();
+
+  if (!db.isDatabaseInitialized()) {
+    return {
+      isSyncing,
+      isOnline: online,
+      lastSyncTime: null,
+      pendingOperations: 0,
+    };
+  }
+
   const lastSync = await db.getLastSyncTime();
 
   return {
@@ -299,4 +419,18 @@ export async function cleanupSyncService(): Promise<void> {
   stopAutoSync();
   await db.clearDatabase();
   console.log('Sync service cleaned up');
+}
+
+/** Mark a task item as picked and sync with server
+ */
+
+export async function taskItemPicked(taskId: number, itemId: number, pickedQuantity: number): Promise<void> {
+  try {
+    await markItemAsPicked(taskId, itemId, pickedQuantity);
+    // Optionally trigger a sync after marking as picked
+    await syncData();
+  } catch (error) {
+    console.error('Failed to mark item as picked:', error);
+    throw error;
+  }
 }

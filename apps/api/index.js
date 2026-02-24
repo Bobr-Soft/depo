@@ -20,10 +20,11 @@ app.use(
 );
 app.use(express.json());
 
-const JWT_SECRET = process.env.JWT_SECRET || (() => {
-  console.error('⚠️ WARNING: JWT_SECRET not set in environment variables!');
-  return 'supersecretjwtkey';
-})();
+if (!process.env.JWT_SECRET) {
+  console.error('❌ FATAL: JWT_SECRET environment variable is not set. Refusing to start.');
+  process.exit(1);
+}
+const JWT_SECRET = process.env.JWT_SECRET;
 
 // Test database connection on startup
 async function testDBConnection() {
@@ -573,6 +574,111 @@ app.get('/tasks', authenticateJWT, async (req, res) => {
     }
   } catch (err) {
     console.error('❌ Error fetching tasks:', err.message);
+    res.status(500).json({ message: 'Database error' });
+  }
+});
+
+// PUT Taskitem set picked amount
+app.put('/tasks/:taskId/items/:itemId/picked', authenticateJWT, async (req, res) => {
+  const { taskId, itemId } = req.params;
+  const { pickedQuantity } = req.body;
+
+  const parsedTaskId = Number.parseInt(taskId, 10);
+  const parsedItemId = Number.parseInt(itemId, 10);
+  const parsedPickedQuantity = Number.parseInt(String(pickedQuantity), 10);
+
+  if (!Number.isInteger(parsedTaskId) || parsedTaskId <= 0) {
+    return res.status(400).json({ message: 'Invalid taskId' });
+  }
+
+  if (!Number.isInteger(parsedItemId) || parsedItemId <= 0) {
+    return res.status(400).json({ message: 'Invalid itemId' });
+  }
+
+  if (!Number.isInteger(parsedPickedQuantity) || parsedPickedQuantity < 0) {
+    return res.status(400).json({ message: 'pickedQuantity must be a non-negative integer' });
+  }
+
+  try {
+    if (!dbConnected) {
+      return res.status(503).json({ message: 'Database not available' });
+    }
+
+    const connection = await db.getConnection();
+
+    try {
+      await connection.beginTransaction();
+
+      const [taskItemRows] = await connection.query(
+        `SELECT ti.id, ti.requested_quantity, ti.picked_quantity,
+                t.assigned_user, u.email AS assigned_email
+         FROM task_items ti
+         JOIN tasks t ON t.id = ti.task_id
+         LEFT JOIN users u ON u.id = t.assigned_user
+         WHERE ti.task_id = ? AND ti.item_id = ?
+         LIMIT 1`,
+        [parsedTaskId, parsedItemId]
+      );
+
+      if (!taskItemRows.length) {
+        await connection.rollback();
+        return res.status(404).json({ message: 'Task item not found' });
+      }
+
+      const taskItem = taskItemRows[0];
+      if (
+        taskItem.assigned_email &&
+        req.user?.email &&
+        taskItem.assigned_email.toLowerCase() !== req.user.email.toLowerCase()
+      ) {
+        await connection.rollback();
+        return res.status(403).json({ message: 'Access denied: task is not assigned to this user' });
+      }
+
+      const nextItemStatus = parsedPickedQuantity >= taskItem.requested_quantity ? 'picked' : 'pending';
+
+      await connection.query(
+        `UPDATE task_items
+         SET picked_quantity = ?, status = ?
+         WHERE task_id = ? AND item_id = ?`,
+        [parsedPickedQuantity, nextItemStatus, parsedTaskId, parsedItemId]
+      );
+
+      const [progressRows] = await connection.query(
+        `SELECT COUNT(*) AS totalItems,
+                SUM(CASE WHEN status = 'picked' THEN 1 ELSE 0 END) AS pickedItems
+         FROM task_items
+         WHERE task_id = ?`,
+        [parsedTaskId]
+      );
+
+      const totalItems = progressRows[0]?.totalItems ?? 0;
+      const pickedItems = progressRows[0]?.pickedItems ?? 0;
+      const nextTaskStatus = totalItems > 0 && pickedItems === totalItems ? 'completed' : 'in_progress';
+
+      await connection.query(
+        'UPDATE tasks SET status = ?, updated_at = NOW() WHERE id = ?',
+        [nextTaskStatus, parsedTaskId]
+      );
+
+      await connection.commit();
+
+      return res.json({
+        message: 'Task item picked quantity updated successfully',
+        taskId: parsedTaskId,
+        itemId: parsedItemId,
+        pickedQuantity: parsedPickedQuantity,
+        itemStatus: nextItemStatus,
+        taskStatus: nextTaskStatus,
+      });
+    } catch (transactionError) {
+      await connection.rollback();
+      throw transactionError;
+    } finally {
+      connection.release();
+    }
+  } catch (err) {
+    console.error('❌ Error updating task item picked quantity:', err.message);
     res.status(500).json({ message: 'Database error' });
   }
 });

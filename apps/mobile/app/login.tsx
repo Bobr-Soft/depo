@@ -4,6 +4,7 @@ import { YStack, XStack, Text, Input, Button, H2, Spinner, ScrollView } from '@r
 import { LogIn } from '@tamagui/lucide-icons';
 import { router } from 'expo-router';
 import { login, logout } from '@/services/auth';
+import { initializeSyncService } from '@/services/sync';
 
 const COLD_START_THRESHOLD = 10000; // Show hint after 10 seconds
 
@@ -56,6 +57,11 @@ export default function LoginScreen() {
     setLoading(false);
 
     if (result.success) {
+      try {
+        await initializeSyncService();
+      } catch (error) {
+        console.error('Failed to initialize sync service after login:', error);
+      }
       setEmail('');
       router.replace('/(tabs)');
     } else {

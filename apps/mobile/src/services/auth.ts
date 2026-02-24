@@ -3,12 +3,15 @@ import {
   setToken,
   setUserEmail,
   getToken,
+  getUserEmail,
   deleteToken,
   deleteUserEmail,
   setUserRole,
   deleteUserRole,
 } from './secureStorage';
 import { API_TIMEOUT, RETRY_CONFIG } from '@/constants/config';
+
+let silentReauthPromise: Promise<LoginResult> | null = null;
 
 export interface LoginResult {
   success: boolean;
@@ -151,4 +154,42 @@ export async function isAuthenticated(): Promise<boolean> {
  */
 export async function logout(): Promise<void> {
   await Promise.all([deleteToken(), deleteUserEmail(), deleteUserRole()]);
+}
+
+/**
+ * Re-authenticate without user input by reusing the stored user email.
+ * This is used when token is expired/invalid during background sync.
+ */
+export async function reauthenticateSilently(): Promise<LoginResult> {
+  if (silentReauthPromise) {
+    return silentReauthPromise;
+  }
+
+  silentReauthPromise = (async () => {
+    const storedEmail = await getUserEmail();
+
+    if (!storedEmail) {
+      return {
+        success: false,
+        error: 'No stored user email. Please log in again.',
+      };
+    }
+
+    console.log('Attempting silent re-authentication...');
+    const result = await login(storedEmail);
+
+    if (result.success) {
+      console.log('✅ Silent re-authentication successful');
+    } else {
+      console.warn(`Silent re-authentication failed: ${result.error ?? 'Unknown error'}`);
+    }
+
+    return result;
+  })();
+
+  try {
+    return await silentReauthPromise;
+  } finally {
+    silentReauthPromise = null;
+  }
 }
