@@ -1,28 +1,25 @@
-import { H2, Text, YStack, XStack, Button, Card, ScrollView, Spinner, Scan, ClipboardCheck, ClipboardX, Box, Square } from "@repo/ui";
+import { H2, Text, YStack, XStack, Button, Card, ScrollView, Spinner, ClipboardCheck, Box, Square } from "@repo/ui";
 import { useLocalSearchParams, router } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { loadTask } from "@/components/api";
 import { TaskComplete } from "@/constants";
-import { ScanBarcode } from "@repo/ui";
 import { Alert } from "react-native";
 import { BarcodeScanner } from "@/components";
+import { taskItemPicked } from "@/services/sync";
+
+const normalizeBarcode = (value: string) => value.trim().replace(/\s+/g, '').toLowerCase();
 
 export default function PickingDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [task, setTask] = useState<TaskComplete | null>(null);
+  const [activeItem, setActiveItem] = useState<TaskComplete['items'][number] | null>(null);
   const [showScanner, setShowScanner] = useState(false);
   const [scannerKey, setScannerKey] = useState(0);
-  const [scannedItems, setScannedItems] = useState<Array<{ code: string; type: string; timestamp: Date }>>([]);
   const isProcessing = useRef(false);
 
-  useEffect(() => {
-    fetchTaskDetails();
-
-  }, [id]);
-
-  async function fetchTaskDetails() {
+  const fetchTaskDetails = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -33,11 +30,16 @@ export default function PickingDetailScreen() {
         setTask(task);
       }
     } catch (error) {
-      setError('Nem sikerült betölteni a feladat részleteit.');
+      setError(`Nem sikerült betölteni a feladat részleteit. ${error instanceof Error ? error.message : 'Ismeretlen hiba'}`);
     } finally {
       setLoading(false);
     }
-  }
+  }, [id]);
+
+  useEffect(() => {
+    fetchTaskDetails();
+    setActiveItem(null);
+  }, [fetchTaskDetails]);
 
     const handleScan = useCallback((data: string, type: string) => {
       // Prevent multiple scans while processing
@@ -45,46 +47,169 @@ export default function PickingDetailScreen() {
 
       isProcessing.current = true;
 
-      // Add scanned item to list
-      setScannedItems(prev => [{
-        code: data,
-        type: type,
-        timestamp: new Date()
-      }, ...prev]);
-
       // Show prompt asking to continue or close
-      Alert.alert(
-        "Termék beolvasva",
-        `Kód: ${data}\nTípus: ${type}`,
-        [
-          {
-            text: "Tovább szkennelés",
-            onPress: () => {
-              isProcessing.current = false;
-              setScannerKey(prev => prev + 1);
+      if (!activeItem) {
+        Alert.alert(
+          "Sikertelen szkennelés",
+          `Nincs kiválasztott tétel.\nKód: ${data}\nTípus: ${type}`,
+          [
+            {
+              text: "Újra szkennelés",
+              onPress: () => {
+                isProcessing.current = false;
+                setScannerKey(prev => prev + 1);
+              },
+              style: "default"
             },
-            style: "default"
-          },
+            {
+              text: "Kész",
+              onPress: () => {
+                isProcessing.current = false;
+                setShowScanner(false);
+                setActiveItem(null);
+                setScannerKey(prev => prev + 1);
+              },
+              style: "cancel"
+            }
+          ],
           {
-            text: "Kész",
-            onPress: () => {
+            cancelable: false,
+            onDismiss: () => {
               isProcessing.current = false;
-              setShowScanner(false);
-              setScannerKey(prev => prev + 1);
+            }
+          }
+        );
+        return;
+      }
+
+      const barcode = activeItem.item.barcode ?? '';
+      const normalizedData = normalizeBarcode(data);
+      const normalizedBarcode = normalizeBarcode(barcode);
+      const matchedItem = barcode.length > 0 && normalizedBarcode === normalizedData ? activeItem : null;
+
+      if (matchedItem) {
+        Alert.alert(
+          "Sikeres szkennelés",
+          `Kért mennyiség: ${matchedItem.requested_quantity}\nÖsszes mennyiség: ${matchedItem.item.quantity}`,
+          [
+            {
+              text: "Részleges teljesítés (áruhiány)",
+              onPress: () => {
+                isProcessing.current = false;
+                setScannerKey(prev => prev + 1);
+              },
+              style: "default"
             },
-            style: "cancel"
+            {
+              text: "Kész",
+              onPress: async () => {
+                try {
+                  await taskItemPicked(
+                    matchedItem.task_id,
+                    matchedItem.item.id,
+                    matchedItem.requested_quantity
+                  );
+                  await fetchTaskDetails();
+                  setShowScanner(false);
+                  setActiveItem(null);
+                  setScannerKey(prev => prev + 1);
+                } catch (pickError) {
+                  Alert.alert(
+                    "Mentési hiba",
+                    pickError instanceof Error ? pickError.message : "Nem sikerült menteni a tételt.",
+                    [
+                      {
+                        text: "Újra",
+                        onPress: () => {
+                          setScannerKey(prev => prev + 1);
+                        },
+                        style: "default"
+                      }
+                    ]
+                  );
+                } finally {
+                  isProcessing.current = false;
+                }
+              },
+              style: "default"
+            },
+            {
+              text: "Mégsem",
+              onPress: () => {
+                isProcessing.current = false;
+                setScannerKey(prev => prev + 1);
+              },
+              style: "destructive"
+            },
+          ],
+          {
+            cancelable: false,
+            onDismiss: () => {
+              isProcessing.current = false;
+            }
           }
-        ],
-        {
-          cancelable: false,
-          onDismiss: () => {
-            isProcessing.current = false;
-          }
+        );
+      }
+        else {
+          Alert.alert(
+            "Sikertelen szkennelés",
+            `A beolvasott termék nem a kiválasztott tétel.\nKód: ${data}\nVárt vonalkód: ${barcode || 'N/A'}`,
+            [
+              {
+                text: "Újra szkennelés",
+                onPress: () => {
+                  isProcessing.current = false;
+                  setScannerKey(prev => prev + 1);
+                },
+                style: "default"
+              },
+              {
+                text: "Kész",
+                onPress: () => {
+                  isProcessing.current = false;
+                  setShowScanner(false);
+                  setActiveItem(null);
+                  setScannerKey(prev => prev + 1);
+                },
+                style: "cancel"
+              }
+            ],
+            {
+              cancelable: false,
+              onDismiss: () => {
+                isProcessing.current = false;
+              }
+            }
+          );
         }
-      );
-    }, []);
+    }, [activeItem, fetchTaskDetails]);
 
     if (showScanner) {
+      if(!activeItem) {
+        Alert.alert(
+          "Hiba",
+          "Nincs kiválasztott tétel a szkenneléshez.",
+          [
+            {
+              text: "OK",
+              onPress: () => {
+                setShowScanner(false);
+                setScannerKey(prev => prev + 1);
+              },
+              style: "default"
+            }
+          ],
+          {
+            cancelable: false
+          }
+        );
+        return null;
+      }
+      if(activeItem.requested_quantity - activeItem.picked_quantity <= 0) {
+        router.replace(`/picking/${id}/edit?item_id=${activeItem.id}`);
+        return null;
+      }
+
       return (
         <BarcodeScanner
           key={scannerKey}
@@ -92,6 +217,7 @@ export default function PickingDetailScreen() {
           onClose={() => {
             isProcessing.current = false;
             setShowScanner(false);
+            setActiveItem(null);
             setScannerKey(prev => prev + 1);
           }}
           title="Termék szkennelés"
@@ -124,8 +250,25 @@ export default function PickingDetailScreen() {
           </YStack>
         ) : task?.items && task?.items.length > 0 ? (
           <ScrollView flex={1}>
-            {task?.items.map((item) =>
-              <Card key={`${item.task_id}-${item.id}-${item.item.id}`} backgroundColor="$color5" marginBottom="$3" padding="$4" borderRadius="$4" gap="$3" onPress={() => {
+            {task?.items.map((item) => {
+              const isCompleted = item.status === 'picked' || item.picked_quantity >= item.requested_quantity;
+
+              return (
+              <Card
+                key={`${item.task_id}-${item.id}-${item.item.id}`}
+                backgroundColor={isCompleted ? "$green3" : "$color5"}
+                borderWidth={1}
+                borderColor={isCompleted ? "$green8" : "$borderColor"}
+                marginBottom="$3"
+                padding="$4"
+                borderRadius="$4"
+                gap="$3"
+                onPress={() => {
+                if (isCompleted) {
+                  router.push(`/picking/${id}/edit?item_id=${item.id}`);
+                  return;
+                }
+                setActiveItem(item);
                 setShowScanner(true);
               }}>
                 <YStack gap="$2">
@@ -133,13 +276,16 @@ export default function PickingDetailScreen() {
                     <YStack flex={1} gap="$1">
                       {/**TODO Fix item category being loaded probably at the db side instead of the name */}
                       <Text fontWeight="600" fontSize={16}>{item.item.name}</Text>
+                      <Text fontSize={12} color={isCompleted ? "$green10" : "$color9"}>
+                        {isCompleted ? 'Teljesítve · Érintsd meg szerkesztéshez' : 'Folyamatban · Érintsd meg szkenneléshez'}
+                      </Text>
                       <Text fontSize={14} color="$color10">Kért: {item.requested_quantity}</Text>
                       <Text fontSize={14} color="$color10">Összes: {item.item.quantity}</Text>
                       <Text fontSize={14} color="$color10">Vonalkód: {item.item.barcode ?? 'N/A'}</Text>
                     </YStack>
                     {/**TODO If item isnt picked show in progress icon, if its picked show green check */}
                     <YStack alignItems="center" justifyContent="center" paddingRight="$2">
-                      {item.status === 'picked' ? (
+                      {isCompleted ? (
                         <Square size={72} backgroundColor="$green5" borderRadius="$4" justifyContent="center" alignItems="center">
                           <ClipboardCheck size={48} color="$color12"/>
                         </Square>
@@ -152,7 +298,7 @@ export default function PickingDetailScreen() {
                   </XStack>
                 </YStack>
               </Card>
-            )}
+            )})}
             <YStack gap="$4">
 
 

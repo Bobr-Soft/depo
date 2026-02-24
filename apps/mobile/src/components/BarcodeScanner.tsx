@@ -33,14 +33,12 @@
  * - Customizable UI and callbacks
  */
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { StyleSheet, Dimensions } from "react-native";
 import { CameraView, useCameraPermissions, BarcodeScanningResult } from "expo-camera";
 import { YStack, XStack, Button, Text, H3 } from "@repo/ui";
 import { X, Flashlight, FlashlightOff } from "@tamagui/lucide-icons";
 import * as Haptics from "expo-haptics";
-import { useColorScheme } from "@/hooks";
-import { Colors } from "@/constants";
 
 const { width } = Dimensions.get("window");
 const SCAN_AREA_SIZE = width * 0.7;
@@ -63,7 +61,7 @@ export interface BarcodeScannerProps {
   /** Show haptic feedback on scan (default: true) */
   enableHaptics?: boolean;
   /** Custom barcode types to scan (defaults to all supported types) */
-  barcodeTypes?: Array<
+  barcodeTypes?: (
     | "qr"
     | "ean13"
     | "ean8"
@@ -77,7 +75,7 @@ export interface BarcodeScannerProps {
     | "pdf417"
     | "aztec"
     | "datamatrix"
-  >;
+  )[];
 }
 
 export function BarcodeScanner({
@@ -109,9 +107,15 @@ export function BarcodeScanner({
   const [scanned, setScanned] = useState(false);
   const [torchOn, setTorchOn] = useState(false);
   const [scannedData, setScannedData] = useState<string | null>(null);
-  const colorScheme = useColorScheme();
-  const colors = Colors[colorScheme];
   const scanLock = useRef(false);
+  const onScanRef = useRef(onScan);
+  const lastScanRef = useRef<{ data: string; timestamp: number } | null>(null);
+
+  useEffect(() => {
+    onScanRef.current = onScan;
+  }, [onScan]);
+
+  const scannerSettings = useMemo(() => ({ barcodeTypes }), [barcodeTypes]);
 
   useEffect(() => {
     if (scanned && autoResetDelay > 0) {
@@ -124,14 +128,23 @@ export function BarcodeScanner({
     }
   }, [scanned, autoResetDelay]);
 
-  const handleBarCodeScanned = ({ type, data }: BarcodeScanningResult) => {
-    // Double protection: check both state and ref
-    if (scanned || scanLock.current) return;
+  const handleBarCodeScanned = useCallback(({ type, data }: BarcodeScanningResult) => {
+    if (scanLock.current) return;
+
+    const normalizedData = data.trim();
+    if (!normalizedData) return;
+
+    const now = Date.now();
+    const previousScan = lastScanRef.current;
+    if (previousScan && previousScan.data === normalizedData && now - previousScan.timestamp < 900) {
+      return;
+    }
 
     // Immediately lock to prevent any duplicate scans
     scanLock.current = true;
+    lastScanRef.current = { data: normalizedData, timestamp: now };
     setScanned(true);
-    setScannedData(data);
+    setScannedData(normalizedData);
 
     // Haptic feedback
     if (enableHaptics) {
@@ -139,15 +152,15 @@ export function BarcodeScanner({
     }
 
     // Call callback
-    onScan(data, type);
-  };
+    onScanRef.current(normalizedData, type);
+  }, [enableHaptics]);
 
   // Manual reset function (can be called externally if needed)
-  const resetScanner = () => {
+  const resetScanner = useCallback(() => {
     setScanned(false);
     setScannedData(null);
     scanLock.current = false;
-  };
+  }, []);
 
   if (!permission) {
     return (
@@ -181,10 +194,9 @@ export function BarcodeScanner({
       <CameraView
         style={StyleSheet.absoluteFillObject}
         facing="back"
+        autofocus="on"
         enableTorch={torchOn}
-        barcodeScannerSettings={{
-          barcodeTypes,
-        }}
+        barcodeScannerSettings={scannerSettings}
         onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
       >
         {/* Header */}
@@ -212,7 +224,7 @@ export function BarcodeScanner({
                 icon={torchOn ? FlashlightOff : Flashlight}
                 backgroundColor="rgba(255,255,255,0.2)"
                 borderColor="transparent"
-                onPress={() => setTorchOn(!torchOn)}
+                onPress={() => setTorchOn((previous) => !previous)}
               />
             ) : (
               <YStack width={48} />

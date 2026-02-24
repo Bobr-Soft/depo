@@ -1,6 +1,6 @@
 import { TaskComplete } from '@/constants';
 import { getToken } from '@/services/secureStorage';
-import { getTasksWithSync, forceRefresh } from '@/services/sync';
+import { getTasksWithSync, forceRefresh, taskItemPicked } from '@/services/sync';
 
 const DEV_BYPASS_TOKEN = 'dev-bypass-token';
 
@@ -90,5 +90,27 @@ export async function refreshTasks(): Promise<TaskComplete[]> {
   } catch (error) {
     console.error('Failed to refresh tasks:', error);
     return [];
+  }
+}
+
+export async function markTaskItemAsPicked(taskId: number, itemId: number, pickedQuantity: number): Promise<boolean> {
+  try {
+    const token = await getToken();
+
+    if(!token) {
+      console.warn('markTaskItemAsPicked: no auth token in secure storage');
+      return false;
+    }
+
+    if (token === DEV_BYPASS_TOKEN) {
+      console.warn('markTaskItemAsPicked: dev bypass - simulating successful API call');
+      return true;
+    }
+
+    await taskItemPicked(taskId, itemId, pickedQuantity);
+    return true;
+  } catch (error) {
+    console.error('Failed to mark task item as picked:', error);
+    return false;
   }
 }

@@ -3,6 +3,7 @@ import { TaskComplete } from '@/constants/types';
 import { getApiUrl, getToken } from './secureStorage';
 import { API_TIMEOUT, RETRY_CONFIG } from '@/constants/config';
 import * as db from './database';
+import { markItemAsPicked } from './database';
 import { logout, reauthenticateSilently } from './auth';
 
 let isSyncing = false;
@@ -156,6 +157,83 @@ async function fetchTasksFromApi(): Promise<TaskComplete[]> {
 }
 
 /**
+ * Push pending sync queue operations to API
+ */
+async function pushSyncQueue(token: string, apiUrl: string): Promise<void> {
+  const queue = await db.getSyncQueue();
+  if (queue.length === 0) {
+    return;
+  }
+
+  console.log(`Processing ${queue.length} pending sync operations...`);
+
+  for (const operation of queue) {
+    try {
+      const payload = JSON.parse(operation.payload);
+
+      if (operation.entity_type === 'task_item' && operation.operation === 'UPDATE') {
+        const { picked_quantity } = payload;
+        const taskItemId = operation.entity_id;
+
+        const taskItemDetails = await db.getTaskItemDetails(taskItemId);
+
+        if (!taskItemDetails) {
+          console.warn(`Task item ${taskItemId} not found, removing from queue`);
+          await db.removeSyncOperation(operation.id);
+          continue;
+        }
+
+        const { task_id, item_id } = taskItemDetails;
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), API_TIMEOUT);
+
+        try {
+          const response = await fetch(
+            `${apiUrl}/tasks/${task_id}/items/${item_id}/picked`,
+            {
+              method: 'PUT',
+              signal: controller.signal,
+              headers: {
+                Authorization: `Bearer ${token}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ pickedQuantity: picked_quantity }),
+            }
+          );
+
+          clearTimeout(timeoutId);
+
+          if (!response.ok) {
+            const errorText = await response.text().catch(() => 'Unknown error');
+            if (response.status === 401 || response.status === 403) {
+              console.error(`Auth error: ${response.status} - ${errorText}`);
+              throw new Error('Unauthorized');
+            }
+            throw new Error(`API error: ${response.status} - ${errorText}`);
+          }
+
+          console.log(`✅ Synced task_item ${taskItemId} to server`);
+          await db.removeSyncOperation(operation.id);
+        } catch (apiError) {
+          clearTimeout(timeoutId);
+          console.warn(
+            `⚠️  Failed to push operation ${operation.id} (attempt ${operation.retry_count + 1}):`,
+            apiError instanceof Error ? apiError.message : 'Unknown error'
+          );
+          await db.incrementSyncRetry(operation.id);
+        }
+      } else {
+        console.warn(`Unsupported sync operation: ${operation.entity_type} ${operation.operation}`);
+        await db.removeSyncOperation(operation.id);
+      }
+    } catch (parseError) {
+      console.error(`Failed to parse sync operation ${operation.id}:`, parseError);
+      await db.removeSyncOperation(operation.id);
+    }
+  }
+}
+
+/**
  * Pull latest data from API and update local database
  */
 async function pullRemoteData(): Promise<TaskComplete[]> {
@@ -199,6 +277,13 @@ export async function syncData(): Promise<{
 
   try {
     console.log('Starting sync...');
+
+    const [apiUrl, token] = await Promise.all([getApiUrl(), getToken()]);
+    if (!token || !apiUrl) {
+      throw new Error('Missing API URL or token for sync');
+    }
+
+    await pushSyncQueue(token, apiUrl);
 
     const tasks = await pullRemoteData();
 
@@ -271,11 +356,9 @@ export async function forceRefresh(): Promise<{
 export function startAutoSync(): void {
   console.log('Starting auto-sync...');
 
-  setTimeout(() => {
-    syncData().catch((error) => {
-      console.error('Initial sync failed:', error);
-    });
-  }, 1000);
+  syncData().catch((error) => {
+    console.error('Initial sync failed:', error);
+  });
 }
 
 /**
@@ -336,4 +419,18 @@ export async function cleanupSyncService(): Promise<void> {
   stopAutoSync();
   await db.clearDatabase();
   console.log('Sync service cleaned up');
+}
+
+/** Mark a task item as picked and sync with server
+ */
+
+export async function taskItemPicked(taskId: number, itemId: number, pickedQuantity: number): Promise<void> {
+  try {
+    await markItemAsPicked(taskId, itemId, pickedQuantity);
+    // Optionally trigger a sync after marking as picked
+    await syncData();
+  } catch (error) {
+    console.error('Failed to mark item as picked:', error);
+    throw error;
+  }
 }

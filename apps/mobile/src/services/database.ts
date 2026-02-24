@@ -586,3 +586,102 @@ export async function setLastSyncTime(timestamp: number): Promise<void> {
     console.error('Failed to set last sync time:', error);
   }
 }
+
+/**
+ * Get task_id and item_id for a given task_item id (for sync operations)
+ */
+export async function getTaskItemDetails(taskItemId: number): Promise<{ task_id: number; item_id: number } | null> {
+  const database = getDb();
+
+  try {
+    const result = await database.getFirstAsync<any>(
+      'SELECT task_id, item_id FROM task_items WHERE id = ?',
+      [taskItemId]
+    );
+    return result || null;
+  } catch (error) {
+    console.error('Failed to get task item details:', error);
+    return null;
+  }
+}
+
+/**
+ * Mark task item as picked and queue for sync
+ */
+export async function markItemAsPicked(
+  taskId: number,
+  itemId: number,
+  pickedQuantity: number
+): Promise<void> {
+  const database = getDb();
+
+  if (!Number.isFinite(pickedQuantity) || pickedQuantity < 0) {
+    throw new Error('Invalid picked quantity.');
+  }
+
+  const safePickedQuantity = Math.floor(pickedQuantity);
+
+  try {
+    await database.withTransactionAsync(async () => {
+      const taskItem = await database.getFirstAsync<any>(
+        `SELECT id, requested_quantity
+         FROM task_items
+         WHERE task_id = ? AND item_id = ?
+         LIMIT 1`,
+        [taskId, itemId]
+      );
+
+      if (!taskItem) {
+        throw new Error(`Task item not found for taskId=${taskId}, itemId=${itemId}`);
+      }
+
+      const itemStatus = safePickedQuantity >= taskItem.requested_quantity ? 'picked' : 'pending';
+      const now = Date.now();
+
+      await database.runAsync(
+        `UPDATE task_items
+         SET picked_quantity = ?, status = ?, synced = 0
+         WHERE id = ?`,
+        [safePickedQuantity, itemStatus, taskItem.id]
+      );
+
+      await database.runAsync(
+        `INSERT INTO sync_queue (operation, entity_type, entity_id, payload, created_at)
+         VALUES (?, ?, ?, ?, ?)`,
+        [
+          'UPDATE',
+          'task_item',
+          taskItem.id,
+          JSON.stringify({ picked_quantity: safePickedQuantity, status: itemStatus }),
+          now,
+        ]
+      );
+
+      const taskProgress = await database.getFirstAsync<any>(
+        `SELECT COUNT(*) AS total_items,
+                SUM(CASE WHEN status = 'picked' THEN 1 ELSE 0 END) AS picked_items
+         FROM task_items
+         WHERE task_id = ?`,
+        [taskId]
+      );
+
+      const totalItems = taskProgress?.total_items ?? 0;
+      const pickedItems = taskProgress?.picked_items ?? 0;
+      const nextTaskStatus = totalItems > 0 && pickedItems === totalItems ? 'completed' : 'in_progress';
+
+      await database.runAsync(
+        'UPDATE tasks SET status = ?, synced = 0, updated_at = ? WHERE id = ?',
+        [nextTaskStatus, now, taskId]
+      );
+
+      await database.runAsync(
+        `INSERT INTO sync_queue (operation, entity_type, entity_id, payload, created_at)
+         VALUES (?, ?, ?, ?, ?)`,
+        ['UPDATE', 'task', taskId, JSON.stringify({ status: nextTaskStatus }), now]
+      );
+    });
+  } catch (error) {
+    console.error('Failed to mark item as picked:', error);
+    throw error;
+  }
+}
