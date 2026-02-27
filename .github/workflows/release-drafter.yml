@@ -21,6 +21,9 @@ jobs:
     runs-on: ubuntu-latest
     env:
       EXPO_PUBLIC_API_URL: ${{ secrets.EXPO_PUBLIC_API_URL }}
+      EXPO_PUBLIC_AZURE_CLIENT_ID: ${{ secrets.EXPO_PUBLIC_AZURE_CLIENT_ID }}
+      EXPO_PUBLIC_AZURE_TENANT_ID: ${{ secrets.EXPO_PUBLIC_AZURE_TENANT_ID }}
+      EXPO_PUBLIC_AZURE_REDIRECT_URI: ${{ secrets.EXPO_PUBLIC_AZURE_REDIRECT_URI }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -64,6 +67,9 @@ jobs:
     runs-on: macos-latest
     env:
       EXPO_PUBLIC_API_URL: ${{ secrets.EXPO_PUBLIC_API_URL }}
+      EXPO_PUBLIC_AZURE_CLIENT_ID: ${{ secrets.EXPO_PUBLIC_AZURE_CLIENT_ID }}
+      EXPO_PUBLIC_AZURE_TENANT_ID: ${{ secrets.EXPO_PUBLIC_AZURE_TENANT_ID }}
+      EXPO_PUBLIC_AZURE_REDIRECT_URI: ${{ secrets.EXPO_PUBLIC_AZURE_REDIRECT_URI }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
