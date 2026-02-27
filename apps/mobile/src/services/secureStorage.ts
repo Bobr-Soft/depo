@@ -7,6 +7,8 @@ export const STORAGE_KEYS = {
   USER_EMAIL: 'user_email',
   USER_ROLE: 'user_role',
   USER_PHOTO_URL: 'user_photo_url',
+  SCAN_SOUND_ENABLED: 'scan_sound_enabled',
+  HAPTIC_FEEDBACK_ENABLED: 'haptic_feedback_enabled',
 } as const;
 
 export type StorageKey = (typeof STORAGE_KEYS)[keyof typeof STORAGE_KEYS];
@@ -82,6 +84,30 @@ export async function setUserPhotoUrl(photoUrl: string): Promise<void> {
 
 export async function deleteUserPhotoUrl(): Promise<void> {
   return SecureStore.deleteItemAsync(STORAGE_KEYS.USER_PHOTO_URL);
+}
+
+export async function getScanSoundEnabled(): Promise<boolean> {
+  const value = await SecureStore.getItemAsync(STORAGE_KEYS.SCAN_SOUND_ENABLED);
+  if (value === null) {
+    return true;
+  }
+  return value === 'true';
+}
+
+export async function setScanSoundEnabled(enabled: boolean): Promise<void> {
+  return SecureStore.setItemAsync(STORAGE_KEYS.SCAN_SOUND_ENABLED, String(enabled));
+}
+
+export async function getHapticFeedbackEnabled(): Promise<boolean> {
+  const value = await SecureStore.getItemAsync(STORAGE_KEYS.HAPTIC_FEEDBACK_ENABLED);
+  if (value === null) {
+    return true;
+  }
+  return value === 'true';
+}
+
+export async function setHapticFeedbackEnabled(enabled: boolean): Promise<void> {
+  return SecureStore.setItemAsync(STORAGE_KEYS.HAPTIC_FEEDBACK_ENABLED, String(enabled));
 }
 
 // ─── Utility ─────────────────────────────────────────────────────────────────

@@ -238,6 +238,7 @@ export default function LoginScreen() {
           {/* Form */}
           <YStack width="100%" gap="$3" maxWidth={420}>
 
+            {/*
             <YStack gap="$2">
               <Text fontSize={12} fontWeight="600" color="$color11" textTransform="uppercase">
                 E-mail cím
@@ -259,7 +260,7 @@ export default function LoginScreen() {
               />
             </YStack>
 
-            {/* Error Message */}
+            {/* Error Message
             {error && (
               <YStack padding="$3" borderRadius="$3" backgroundColor="$red3" borderLeftWidth={3} borderLeftColor="$red10" gap="$1">
                 <Text fontSize={13} color="$red10" fontWeight="500">
@@ -268,7 +269,7 @@ export default function LoginScreen() {
               </YStack>
             )}
 
-            {/* Azure Login Button */}
+            {/* Azure Login Button
             <Button
               size="$5"
               theme={loading ? 'gray' : 'blue'}
@@ -281,7 +282,7 @@ export default function LoginScreen() {
                 <Text fontWeight="600">{loading ? 'Bejelentkezés...' : 'Bejelentkezés'}</Text>
               </XStack>
             </Button>
-
+              */}
             {/* Microsoft Login Button */}
             <Button
               size="$5"
