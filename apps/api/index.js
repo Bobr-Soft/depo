@@ -644,6 +644,17 @@ app.put('/tasks/:taskId/items/:itemId/picked', authenticateJWT, async (req, res)
         [parsedPickedQuantity, nextItemStatus, parsedTaskId, parsedItemId]
       );
 
+      // Subtract picked quantity from item stock
+      const quantityChange = parsedPickedQuantity - (taskItem.picked_quantity || 0);
+      if (quantityChange !== 0) {
+        await connection.query(
+          `UPDATE items
+           SET quantity = quantity - ?
+           WHERE id = ?`,
+          [quantityChange, parsedItemId]
+        );
+      }
+
       const [progressRows] = await connection.query(
         `SELECT COUNT(*) AS totalItems,
                 SUM(CASE WHEN status = 'picked' THEN 1 ELSE 0 END) AS pickedItems

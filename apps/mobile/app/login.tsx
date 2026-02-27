@@ -1,83 +1,184 @@
-import { useState, useEffect, SetStateAction } from 'react';
-import { KeyboardAvoidingView, Platform } from 'react-native';
-import { YStack, XStack, Text, Input, Button, H2, Spinner, ScrollView } from '@repo/ui';
-import { LogIn } from '@tamagui/lucide-icons';
+import { useState } from 'react';
+import { KeyboardAvoidingView, Platform, NativeModules } from 'react-native';
+import { YStack, XStack, Text, Button, H2, Spinner, ScrollView, Input } from '@repo/ui';
 import { router } from 'expo-router';
-import { login, logout } from '@/services/auth';
+import { login } from '@/services/auth';
+import { deleteUserPhotoUrl, setUserPhotoUrl } from '@/services/secureStorage';
 import { initializeSyncService } from '@/services/sync';
+import AzureAuth from 'react-native-azure-auth';
+import Constants from 'expo-constants';
 
-const COLD_START_THRESHOLD = 10000; // Show hint after 10 seconds
+const azureClientId = process.env.EXPO_PUBLIC_AZURE_CLIENT_ID;
+const azureTenantId = process.env.EXPO_PUBLIC_AZURE_TENANT_ID;
+const azureRedirectUri = process.env.EXPO_PUBLIC_AZURE_REDIRECT_URI;
+
+function isValidEmail(email: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+async function fetchGraphPhotoDataUrl(accessToken: string): Promise<string | null> {
+  const photoSizes = ['96x96', '64x64', '48x48'];
+
+  for (const size of photoSizes) {
+    try {
+      const response = await fetch(`https://graph.microsoft.com/v1.0/me/photos/${size}/$value`, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        if (response.status === 404) {
+          return null;
+        }
+        continue;
+      }
+
+      const contentType = response.headers.get('content-type') ?? 'image/jpeg';
+      const blob = await response.blob();
+
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          if (typeof reader.result === 'string') {
+            resolve(reader.result);
+          } else {
+            reject(new Error('Nem sikerült a profilképet adat URL-re konvertálni.'));
+          }
+        };
+        reader.onerror = () => reject(new Error('Nem sikerült a profilkép olvasása.'));
+        reader.readAsDataURL(new Blob([blob], { type: contentType }));
+      });
+
+      return dataUrl;
+    } catch (error) {
+      console.warn(`Failed to load Graph profile photo (${size}):`, error);
+    }
+  }
+
+  return null;
+}
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
+  const [azureLoading, setAzureLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [elapsedTime, setElapsedTime] = useState(0);
-  const [showColdStartHint, setShowColdStartHint] = useState(false);
 
-  useEffect(() => {
-    let interval: ReturnType<typeof setInterval> | null = null;
-    if (loading) {
-      setElapsedTime(0);
-      setShowColdStartHint(false);
-      interval = setInterval(() => {
-        setElapsedTime((prev) => {
-          const next = prev + 1000;
-          if (next >= COLD_START_THRESHOLD) {
-            setShowColdStartHint(true);
-          }
-          return next;
-        });
-      }, 1000);
+  async function handleSuccessfulLogin() {
+    try {
+      await initializeSyncService();
+    } catch (error) {
+      console.error('Failed to initialize sync service after login:', error);
     }
-    return () => {
-      if (interval !== null) clearInterval(interval);
-    };
-  }, [loading]);
+    router.replace('/(tabs)');
+  }
 
-  async function handleLogin() {
+  async function handleAzureLogin() {
+    setAzureLoading(true);
+    setError(null);
+
+    try {
+      const isExpoGo = Constants.appOwnership === 'expo';
+
+      if (isExpoGo || !NativeModules.AzureAuth) {
+        const bypassEmail = email.trim();
+
+        if (!bypassEmail || !isValidEmail(bypassEmail)) {
+          throw new Error('Expo Go bypasshoz adj meg egy érvényes e-mail címet.');
+        }
+
+        const bypassResult = await login(bypassEmail);
+        if (!bypassResult.success) {
+          throw new Error(bypassResult.error ?? 'Sikertelen Expo Go bypass bejelentkezés.');
+        }
+
+        await deleteUserPhotoUrl();
+
+        await handleSuccessfulLogin();
+        return;
+      }
+
+      if (!azureClientId || !azureTenantId || !azureRedirectUri) {
+        throw new Error('Microsoft bejelentkezés nincs beállítva. Ellenőrizd az EXPO_PUBLIC_AZURE_* változókat.');
+      }
+
+      const azureAuth = new AzureAuth({
+        clientId: azureClientId,
+        tenant: azureTenantId,
+        redirectUri: azureRedirectUri,
+      });
+
+      const tokens = await azureAuth.webAuth.authorize({
+        scope: 'openid profile email User.Read',
+      });
+
+      if (!tokens.accessToken) {
+        throw new Error('Nem érkezett hozzáférési token a Microsofttól.');
+      }
+
+      const profile = await azureAuth.auth.msGraphRequest({
+        token: tokens.accessToken,
+        path: '/me',
+      });
+
+      const azureEmail = profile?.mail || profile?.userPrincipalName;
+      if (!azureEmail || typeof azureEmail !== 'string') {
+        throw new Error('A Microsoft-fiókhoz nem tartozik e-mail cím.');
+      }
+
+      const result = await login(azureEmail);
+
+      if (!result.success) {
+        throw new Error(result.error ?? 'Sikertelen backend bejelentkezés Microsoft azonosítás után.');
+      }
+
+      const photoDataUrl = await fetchGraphPhotoDataUrl(tokens.accessToken);
+      if (photoDataUrl) {
+        try {
+          await setUserPhotoUrl(photoDataUrl);
+        } catch (error) {
+          console.warn('Profilkép mentése sikertelen, fallback avatart használunk:', error);
+          await deleteUserPhotoUrl();
+        }
+      } else {
+        await deleteUserPhotoUrl();
+      }
+
+      await handleSuccessfulLogin();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Sikertelen Microsoft bejelentkezés.');
+    } finally {
+      setAzureLoading(false);
+    }
+  }
+
+  async function handleEmailLogin() {
     const trimmed = email.trim();
 
-    if (!trimmed) {
-      setError('Kérjük adja meg az e-mail címét.');
-      return;
-    }
-
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(trimmed)) {
-      setError('Kérjük adjon meg érvényes e-mail címet.');
+    if (!trimmed || !isValidEmail(trimmed)) {
+      setError('Kérlek adj meg egy érvényes e-mail címet.');
       return;
     }
 
     setLoading(true);
     setError(null);
 
-    const result = await login(trimmed);
-
-    setLoading(false);
-
-    if (result.success) {
-      try {
-        await initializeSyncService();
-      } catch (error) {
-        console.error('Failed to initialize sync service after login:', error);
+    try {
+      const result = await login(trimmed);
+      if (!result.success) {
+        throw new Error(result.error ?? 'Sikertelen bejelentkezés.');
       }
-      setEmail('');
-      router.replace('/(tabs)');
-    } else {
-      setError(result.error ?? 'Ismeretlen hiba történt. Kérjük próbálja újra később.');
+
+      await deleteUserPhotoUrl();
+
+      await handleSuccessfulLogin();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Sikertelen bejelentkezés.');
+    } finally {
+      setLoading(false);
     }
   }
-
-  async function handleResetAuth() {
-    await logout();
-    setError(null);
-    setEmail('');
-  }
-
-  const formatTime = (ms: number) => {
-    return Math.ceil(ms / 1000);
-  };
 
   return (
     <KeyboardAvoidingView
@@ -101,15 +202,14 @@ export default function LoginScreen() {
           {/* Form */}
           <YStack width="100%" gap="$3" maxWidth={420}>
 
-            {/* Email Label */}
             <YStack gap="$2">
               <Text fontSize={12} fontWeight="600" color="$color11" textTransform="uppercase">
                 E-mail cím
               </Text>
               <Input
-                placeholder="example@example.com"
+                placeholder="valaki@domain.hu"
                 value={email}
-                onChangeText={(text: SetStateAction<string>) => {
+                onChangeText={(text: string) => {
                   setEmail(text);
                   if (error) setError(null);
                 }}
@@ -117,8 +217,8 @@ export default function LoginScreen() {
                 autoCorrect={false}
                 keyboardType="email-address"
                 returnKeyType="done"
-                onSubmitEditing={handleLogin}
-                editable={!loading}
+                onSubmitEditing={handleEmailLogin}
+                editable={!loading && !azureLoading}
                 size="$4"
               />
             </YStack>
@@ -132,30 +232,12 @@ export default function LoginScreen() {
               </YStack>
             )}
 
-            {/* Cold Start Hint */}
-            {showColdStartHint && loading && (
-              <YStack padding="$3" borderRadius="$3" backgroundColor="$blue3" gap="$2">
-                <Text fontSize={12} fontWeight="600" color="$blue11">
-                  ℹ️ Első csatlakozás
-                </Text>
-                <Text fontSize={13} color="$blue11" lineHeight={18}>
-                  Az alkalmazás szervere indulást követően csatlakozik. Ez lehet, hogy eltart még {Math.max(0, 60 - formatTime(elapsedTime))} másodpercig.
-                </Text>
-                <XStack gap="$2" alignItems="center" marginTop="$2">
-                  <YStack flex={1} height={3} borderRadius="$2" backgroundColor="$blue8" />
-                  <Text fontSize={12} fontWeight="600" color="$blue11" minWidth={30}>
-                    {formatTime(elapsedTime)}s
-                  </Text>
-                </XStack>
-              </YStack>
-            )}
-
-            {/* Login Button */}
+            {/* Azure Login Button */}
             <Button
               size="$5"
-              theme={loading || !email.trim() ? 'gray' : 'blue'}
-              onPress={handleLogin}
-              disabled={loading || !email.trim()}
+              theme={loading ? 'gray' : 'blue'}
+              onPress={handleEmailLogin}
+              disabled={loading || azureLoading}
               pressStyle={{ scale: 0.96 }}
             >
               <XStack gap="$2" alignItems="center" justifyContent="center">
@@ -164,15 +246,18 @@ export default function LoginScreen() {
               </XStack>
             </Button>
 
-            {/* Reset Button */}
+            {/* Microsoft Login Button */}
             <Button
-              size="$4"
-              theme="gray"
-              onPress={handleResetAuth}
-              disabled={loading}
+              size="$5"
+              theme={azureLoading ? 'gray' : 'blue'}
+              onPress={handleAzureLogin}
+              disabled={loading || azureLoading}
               pressStyle={{ scale: 0.96 }}
             >
-              <Text fontWeight="500">Adatok törlése</Text>
+              <XStack gap="$2" alignItems="center" justifyContent="center">
+                {azureLoading && <Spinner size="small" />}
+                <Text fontWeight="600">{azureLoading ? 'Microsoft bejelentkezés...' : 'Bejelentkezés Microsofttal'}</Text>
+              </XStack>
             </Button>
 
           </YStack>

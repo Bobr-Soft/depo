@@ -59,7 +59,7 @@ export default function RootLayout() {
           }}
         />
         <Stack.Screen
-          name="picking"
+          name="picking/index"
           options={{
             title: "Komissiózás",
             headerShown: true,

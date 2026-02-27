@@ -389,12 +389,13 @@ export async function getSyncStatus(): Promise<{
   }
 
   const lastSync = await db.getLastSyncTime();
+  const queue = await db.getSyncQueue();
 
   return {
     isSyncing,
     isOnline: online,
     lastSyncTime: lastSync,
-    pendingOperations: 0,
+    pendingOperations: queue.length,
   };
 }
 
