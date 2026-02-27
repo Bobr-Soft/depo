@@ -23,7 +23,7 @@
           "data": [
             {
               "scheme": "depomobile",
-              "host": "auth"
+              "host": "redirect"
             }
           ],
           "category": [

@@ -1,16 +1,17 @@
-import { useState } from 'react';
-import { KeyboardAvoidingView, Platform, NativeModules } from 'react-native';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { KeyboardAvoidingView, Platform } from 'react-native';
 import { YStack, XStack, Text, Button, H2, Spinner, ScrollView, Input } from '@repo/ui';
 import { router } from 'expo-router';
 import { login } from '@/services/auth';
 import { deleteUserPhotoUrl, setUserPhotoUrl } from '@/services/secureStorage';
 import { initializeSyncService } from '@/services/sync';
-import AzureAuth from 'react-native-azure-auth';
-import Constants from 'expo-constants';
+import * as WebBrowser from 'expo-web-browser';
+import { makeRedirectUri, useAuthRequest } from 'expo-auth-session';
 
 const azureClientId = process.env.EXPO_PUBLIC_AZURE_CLIENT_ID;
 const azureTenantId = process.env.EXPO_PUBLIC_AZURE_TENANT_ID;
-const azureRedirectUri = process.env.EXPO_PUBLIC_AZURE_REDIRECT_URI;
+
+WebBrowser.maybeCompleteAuthSession();
 
 function isValidEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -65,6 +66,33 @@ export default function LoginScreen() {
   const [azureLoading, setAzureLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const discovery = useMemo(() => {
+    if (!azureTenantId) {
+      return null;
+    }
+
+    return {
+      authorizationEndpoint: `https://login.microsoftonline.com/${azureTenantId}/oauth2/v2.0/authorize`,
+      tokenEndpoint: `https://login.microsoftonline.com/${azureTenantId}/oauth2/v2.0/token`,
+    };
+  }, []);
+
+  const [request, response, promptAsync] = useAuthRequest(
+    {
+      clientId: azureClientId ?? '',
+      scopes: ['openid', 'profile', 'email', 'offline_access', 'User.Read'],
+      responseType: 'token',
+      redirectUri: makeRedirectUri({
+        scheme: 'depomobile',
+        path: 'redirect',
+      }),
+      extraParams: {
+        prompt: 'select_account',
+      },
+    },
+    discovery
+  );
+
   async function handleSuccessfulLogin() {
     try {
       await initializeSyncService();
@@ -74,55 +102,21 @@ export default function LoginScreen() {
     router.replace('/(tabs)');
   }
 
-  async function handleAzureLogin() {
-    setAzureLoading(true);
-    setError(null);
-
+  const completeAzureLogin = useCallback(async (accessToken: string) => {
     try {
-      const isExpoGo = Constants.appOwnership === 'expo';
-
-      if (isExpoGo || !NativeModules.AzureAuth) {
-        const bypassEmail = email.trim();
-
-        if (!bypassEmail || !isValidEmail(bypassEmail)) {
-          throw new Error('Expo Go bypasshoz adj meg egy érvényes e-mail címet.');
-        }
-
-        const bypassResult = await login(bypassEmail);
-        if (!bypassResult.success) {
-          throw new Error(bypassResult.error ?? 'Sikertelen Expo Go bypass bejelentkezés.');
-        }
-
-        await deleteUserPhotoUrl();
-
-        await handleSuccessfulLogin();
-        return;
-      }
-
-      if (!azureClientId || !azureTenantId || !azureRedirectUri) {
-        throw new Error('Microsoft bejelentkezés nincs beállítva. Ellenőrizd az EXPO_PUBLIC_AZURE_* változókat.');
-      }
-
-      const azureAuth = new AzureAuth({
-        clientId: azureClientId,
-        tenant: azureTenantId,
-        redirectUri: azureRedirectUri,
+      const profileResponse = await fetch('https://graph.microsoft.com/v1.0/me?$select=mail,userPrincipalName', {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
       });
 
-      const tokens = await azureAuth.webAuth.authorize({
-        scope: 'openid profile email User.Read',
-      });
-
-      if (!tokens.accessToken) {
-        throw new Error('Nem érkezett hozzáférési token a Microsofttól.');
+      if (!profileResponse.ok) {
+        throw new Error('Nem sikerült lekérni a Microsoft profilt.');
       }
 
-      const profile = await azureAuth.auth.msGraphRequest({
-        token: tokens.accessToken,
-        path: '/me',
-      });
-
+      const profile = await profileResponse.json();
       const azureEmail = profile?.mail || profile?.userPrincipalName;
+
       if (!azureEmail || typeof azureEmail !== 'string') {
         throw new Error('A Microsoft-fiókhoz nem tartozik e-mail cím.');
       }
@@ -133,12 +127,12 @@ export default function LoginScreen() {
         throw new Error(result.error ?? 'Sikertelen backend bejelentkezés Microsoft azonosítás után.');
       }
 
-      const photoDataUrl = await fetchGraphPhotoDataUrl(tokens.accessToken);
+      const photoDataUrl = await fetchGraphPhotoDataUrl(accessToken);
       if (photoDataUrl) {
         try {
           await setUserPhotoUrl(photoDataUrl);
-        } catch (error) {
-          console.warn('Profilkép mentése sikertelen, fallback avatart használunk:', error);
+        } catch (storageError) {
+          console.warn('Profilkép mentése sikertelen, fallback avatart használunk:', storageError);
           await deleteUserPhotoUrl();
         }
       } else {
@@ -149,6 +143,48 @@ export default function LoginScreen() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Sikertelen Microsoft bejelentkezés.');
     } finally {
+      setAzureLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!response) {
+      return;
+    }
+
+    if (response.type !== 'success') {
+      setAzureLoading(false);
+      return;
+    }
+
+    const accessToken = response.authentication?.accessToken;
+    if (!accessToken) {
+      setError('Nem érkezett hozzáférési token a Microsofttól.');
+      setAzureLoading(false);
+      return;
+    }
+
+    void completeAzureLogin(accessToken);
+  }, [completeAzureLogin, response]);
+
+  async function handleAzureLogin() {
+    try {
+      if (!azureClientId || !azureTenantId) {
+        throw new Error('Microsoft bejelentkezés nincs beállítva. Ellenőrizd az EXPO_PUBLIC_AZURE_CLIENT_ID és EXPO_PUBLIC_AZURE_TENANT_ID változókat.');
+      }
+
+      if (!request) {
+        throw new Error('Microsoft bejelentkezés inicializálása folyamatban, próbáld újra pár másodperc múlva.');
+      }
+
+      setAzureLoading(true);
+      setError(null);
+      const result = await promptAsync();
+      if (result.type !== 'success') {
+        setAzureLoading(false);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Sikertelen Microsoft bejelentkezés.');
       setAzureLoading(false);
     }
   }
