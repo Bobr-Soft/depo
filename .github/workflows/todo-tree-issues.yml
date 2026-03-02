@@ -3,6 +3,10 @@ name: Todo Tree Issue Sync
 on:
   push:
     branches: [dev]
+    paths:
+      - 'TODO_TREE.md'
+      - '.github/CODEOWNERS'
+      - '.github/workflows/todo-tree-issues.yml'
   workflow_dispatch:
 
 permissions:
@@ -48,6 +52,9 @@ jobs:
 
             const repoOwner = context.repo.owner;
             const repoName = context.repo.repo;
+            const branchName = context.ref.replace('refs/heads/', '');
+            const shortSha = context.sha.slice(0, 7);
+            const runUrl = `${context.payload.repository.html_url}/actions/runs/${context.runId}`;
 
             const ensureLabel = async (name, color, description) => {
               try {
@@ -206,6 +213,20 @@ jobs:
               return { type, title, areas, priority };
             };
 
+            const extractPathsFromTaskText = (text) => {
+              const found = [];
+              const normalizedText = text.replace(/`/g, ' ');
+              const pathRegex = /\/?apps\/[a-zA-Z0-9_./\-\[\]]+/g;
+              for (const match of normalizedText.matchAll(pathRegex)) {
+                const value = match[0].replace(/\\/g, '/');
+                const normalized = value.startsWith('/') ? value : `/${value}`;
+                if (!found.includes(normalized)) {
+                  found.push(normalized);
+                }
+              }
+              return found;
+            };
+
             const lines = todoContent.split(/\r?\n/);
             const stack = [];
             const tasks = [];
@@ -266,6 +287,7 @@ jobs:
                 priority: effectivePriority,
                 path: titlePath,
                 line: index + 1,
+                matchedPaths: extractPathsFromTaskText(parsed.title),
               });
             }
 
@@ -280,6 +302,7 @@ jobs:
             });
 
             const existingByTaskId = new Map();
+            const existingOpenByTitle = new Map();
 
             for (const issue of existingIssues) {
               if (issue.pull_request) {
@@ -289,6 +312,9 @@ jobs:
               const body = issue.body || '';
               const marker = body.match(/todo-tree-id:\s*([a-f0-9]{40})/i);
               if (!marker) {
+                if (issue.state === 'open' && issue.title) {
+                  existingOpenByTitle.set(issue.title.trim().toLowerCase(), issue);
+                }
                 continue;
               }
 
@@ -307,7 +333,6 @@ jobs:
             const currentTaskIds = new Set(tasks.map((task) => task.id));
             let createdCount = 0;
             let updatedCount = 0;
-            let skippedClosedCount = 0;
 
             const buildAssignees = (areas) => {
               const areaList = (areas && areas.length > 0) ? areas : ['CONTRACT'];
@@ -332,6 +357,25 @@ jobs:
               return [...new Set(fallback)];
             };
 
+            const buildAssigneesFromTask = (task) => {
+              const owners = [];
+
+              for (const targetPath of task.matchedPaths || []) {
+                for (const owner of ownersForPath(targetPath)) {
+                  if (!owners.includes(owner)) {
+                    owners.push(owner);
+                  }
+                }
+              }
+
+              const usersFromPath = owners.filter((owner) => !owner.includes('/'));
+              if (usersFromPath.length > 0) {
+                return usersFromPath;
+              }
+
+              return buildAssignees(task.areas);
+            };
+
             const buildLabels = (task) => {
               const labels = ['todo-tree', `type:${task.type.toLowerCase()}`];
 
@@ -352,9 +396,10 @@ jobs:
             for (const task of tasks) {
               const areaPrefix = task.areas.length > 0 ? `[${task.areas.join('+')}]` : '[GENERAL]';
               const priorityPrefix = task.priority ? `[${task.priority}]` : '[PX]';
-              const title = `${areaPrefix}${priorityPrefix} ${task.title}`;
+              const baseTitle = `${areaPrefix}${priorityPrefix} ${task.title}`;
+              const title = baseTitle.length > 250 ? `${baseTitle.slice(0, 247)}...` : baseTitle;
               const labels = buildLabels(task);
-              const assignees = buildAssignees(task.areas);
+              const assignees = buildAssigneesFromTask(task);
 
               const body = [
                 `Automated issue generated from TODO tree.`,
@@ -364,7 +409,11 @@ jobs:
                 `- Type: \`${task.type}\``,
                 `- Priority: \`${task.priority || 'N/A'}\``,
                 `- Areas: \`${task.areas.length ? task.areas.join(', ') : 'N/A'}\``,
+                `- Mentioned paths: \`${task.matchedPaths?.length ? task.matchedPaths.join(', ') : 'N/A'}\``,
                 `- Path: \`${task.path.join(' > ')}\``,
+                `- Branch: \`${branchName}\``,
+                `- Last sync commit: \`${shortSha}\``,
+                `- Workflow run: ${runUrl}`,
                 '',
                 '### Task',
                 task.title,
@@ -372,7 +421,9 @@ jobs:
                 `<!-- todo-tree-id: ${task.id} -->`,
               ].join('\n');
 
-              const existing = existingByTaskId.get(task.id);
+              const existing = existingByTaskId.get(task.id)
+                || existingOpenByTitle.get(title.trim().toLowerCase())
+                || null;
 
               if (!existing) {
                 const created = await github.rest.issues.create({
@@ -401,7 +452,43 @@ jobs:
               }
 
               if (existing.state === 'closed') {
-                skippedClosedCount += 1;
+                await github.rest.issues.update({
+                  owner: repoOwner,
+                  repo: repoName,
+                  issue_number: existing.number,
+                  state: 'open',
+                  title,
+                  body,
+                });
+
+                await github.rest.issues.createComment({
+                  owner: repoOwner,
+                  repo: repoName,
+                  issue_number: existing.number,
+                  body: `Reopened automatically because the task is unchecked again in TODO_TREE.md (commit ${shortSha} by @${context.actor}).`,
+                });
+
+                await github.rest.issues.setLabels({
+                  owner: repoOwner,
+                  repo: repoName,
+                  issue_number: existing.number,
+                  labels,
+                });
+
+                if (assignees.length > 0) {
+                  try {
+                    await github.rest.issues.addAssignees({
+                      owner: repoOwner,
+                      repo: repoName,
+                      issue_number: existing.number,
+                      assignees,
+                    });
+                  } catch (assignError) {
+                    core.warning(`Unable to assign reopened issue #${existing.number}: ${assignError.message}`);
+                  }
+                }
+
+                updatedCount += 1;
                 continue;
               }
 
@@ -443,7 +530,7 @@ jobs:
                   owner: repoOwner,
                   repo: repoName,
                   issue_number: issue.number,
-                  body: 'Closing automatically because the task is no longer unchecked in TODO_TREE.md.',
+                  body: `Closing automatically because this task is checked off (or removed) in TODO_TREE.md.\n\nSynced from commit ${shortSha} by @${context.actor}.`,
                 });
 
                 await github.rest.issues.update({
@@ -457,4 +544,4 @@ jobs:
               }
             }
 
-            core.info(`Todo sync summary: created=${createdCount}, updated=${updatedCount}, closed=${closedCount}, skipped_closed=${skippedClosedCount}`);
+            core.info(`Todo sync summary: created=${createdCount}, updated=${updatedCount}, closed=${closedCount}`);
