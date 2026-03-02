@@ -16,13 +16,84 @@ export default function ItemsScreen() {
   const [sortMode, setSortMode] = useState<'priority' | 'deadline' | 'updated'>('priority');
   const syncStatus = useSyncStatus();
 
+  function getTaskWorkflowOrder(task: TaskComplete): number {
+    const status = String(task.status ?? '').toLowerCase();
+    const isAssigned = task.assigned_user !== null && task.assigned_user !== undefined;
+    const isCompleted = status === 'completed';
+    const isAssignable = !isAssigned && status === 'pending';
+    const isAssignedPending = isAssigned && status === 'pending';
+    const isInProgressOrWaiting = status === 'in_progress' || status === 'pending';
+
+    if (isAssignable) {
+      return 0;
+    }
+
+    if (isAssignedPending) {
+      return 1;
+    }
+
+    if (isInProgressOrWaiting) {
+      return 2;
+    }
+
+    if (isCompleted) {
+      return 3;
+    }
+
+    return 4;
+  }
+
+  function getTaskWorkflowLabel(task: TaskComplete): string {
+    const order = getTaskWorkflowOrder(task);
+
+    if (order === 0) {
+      return 'Elfogadható';
+    }
+
+    if (order === 1) {
+      return 'Hozzárendelt';
+    }
+
+    if (order === 2) {
+      return 'Folyamatban / Várakozó';
+    }
+
+    if (order === 3) {
+      return 'Kész';
+    }
+
+    return 'Egyéb';
+  }
+
+  function getTaskWorkflowTheme(task: TaskComplete): { bg: '$blue5' | '$yellow5' | '$orange5' | '$green5' | '$gray5'; text: '$blue10' | '$yellow10' | '$orange10' | '$green10' | '$gray10' } {
+    const order = getTaskWorkflowOrder(task);
+
+    if (order === 0) {
+      return { bg: '$blue5', text: '$blue10' };
+    }
+
+    if (order === 1) {
+      return { bg: '$yellow5', text: '$yellow10' };
+    }
+
+    if (order === 2) {
+      return { bg: '$orange5', text: '$orange10' };
+    }
+
+    if (order === 3) {
+      return { bg: '$green5', text: '$green10' };
+    }
+
+    return { bg: '$gray5', text: '$gray10' };
+  }
+
   const orderedTasks = useMemo(() => {
     const sorted = [...tasks].sort((a, b) => {
-      const aAssigned = a.assigned_user !== null && a.assigned_user !== undefined;
-      const bAssigned = b.assigned_user !== null && b.assigned_user !== undefined;
+      const aWorkflowOrder = getTaskWorkflowOrder(a);
+      const bWorkflowOrder = getTaskWorkflowOrder(b);
 
-      if (aAssigned !== bAssigned) {
-        return aAssigned ? -1 : 1;
+      if (aWorkflowOrder !== bWorkflowOrder) {
+        return aWorkflowOrder - bWorkflowOrder;
       }
 
       if (sortMode === 'deadline') {
@@ -147,7 +218,7 @@ export default function ItemsScreen() {
               </Button>
             </XStack>
             <Text fontSize={12} color="$color10">
-              A hozzárendelt feladatok mindig előre kerülnek.
+              Sorrend: elfogadható, hozzárendelt, folyamatban/várakozó, majd kész.
             </Text>
           </YStack>
         </Card>
@@ -241,40 +312,65 @@ export default function ItemsScreen() {
               </Button>
             </YStack>
           ) : orderedTasks.length > 0 ? (
-            orderedTasks.map((task) => (
-              <Card
-                key={task.id}
-                backgroundColor="$background"
-                marginBottom="$2"
-                onPress={() => router.push({ pathname: '/picking/[id]', params: { id: task.id } })}
-              >
-                <XStack gap="$3" alignItems="center">
-                  <YStack flex={1} gap="$1" backgroundColor="$color5" padding="$4" borderRadius="$4">
-                    <Text fontWeight="600" fontSize={20}>{task.source_id ?? 'Nincs forrás'}</Text>
-                    <XStack gap="$1.5" alignItems="center">
-                      <Package size={18} color="$color10" />
-                      <Text fontSize={16} color="$color10">{task.items.length} tétel</Text>
+            orderedTasks.map((task, index) => {
+              const workflowLabel = getTaskWorkflowLabel(task);
+              const workflowTheme = getTaskWorkflowTheme(task);
+              const previousTask = index > 0 ? orderedTasks[index - 1] : null;
+              const isNewGroup = !previousTask || getTaskWorkflowOrder(previousTask) !== getTaskWorkflowOrder(task);
+
+              return (
+                <YStack key={task.id}>
+                  {isNewGroup && (
+                    <XStack marginTop={index === 0 ? '$0' : '$3'} marginBottom="$2">
+                      <YStack backgroundColor={workflowTheme.bg} paddingHorizontal="$3" paddingVertical="$2" borderRadius="$4">
+                        <Text fontSize={12} fontWeight="700" color={workflowTheme.text}>
+                          {workflowLabel}
+                        </Text>
+                      </YStack>
                     </XStack>
-                    <XStack gap="$1.5" alignItems="center">
-                      <Text fontSize={16} color="$color11">Prioritás:</Text>
-                      <Text
-                        fontSize={16}
-                        fontWeight="600"
-                        color={task.priority === 1 ? '$red10' : task.priority === 2 ? '$yellow10' : '$green10'}
-                      >
-                        {task.priority === 1 ? 'Kritikus' : task.priority === 2 ? 'Magas' : task.priority === 3 ? 'Normál' : 'Alacsony'}
-                      </Text>
+                  )}
+
+                  <Card
+                    backgroundColor="$background"
+                    marginBottom="$2"
+                    onPress={() => router.push({ pathname: '/picking/[id]', params: { id: task.id } })}
+                  >
+                    <XStack gap="$3" alignItems="center">
+                      <YStack flex={1} gap="$1" backgroundColor="$color5" padding="$4" borderRadius="$4">
+                        <XStack justifyContent="space-between" alignItems="center" gap="$2">
+                          <Text fontWeight="600" fontSize={20}>{task.source_id ?? 'Nincs forrás'}</Text>
+                          <YStack backgroundColor={workflowTheme.bg} paddingHorizontal="$2" paddingVertical="$1" borderRadius="$3">
+                            <Text fontSize={11} fontWeight="700" color={workflowTheme.text}>
+                              {workflowLabel}
+                            </Text>
+                          </YStack>
+                        </XStack>
+                        <XStack gap="$1.5" alignItems="center">
+                          <Package size={18} color="$color10" />
+                          <Text fontSize={16} color="$color10">{task.items.length} tétel</Text>
+                        </XStack>
+                        <XStack gap="$1.5" alignItems="center">
+                          <Text fontSize={16} color="$color11">Prioritás:</Text>
+                          <Text
+                            fontSize={16}
+                            fontWeight="600"
+                            color={task.priority === 1 ? '$red10' : task.priority === 2 ? '$yellow10' : '$green10'}
+                          >
+                            {task.priority === 1 ? 'Kritikus' : task.priority === 2 ? 'Magas' : task.priority === 3 ? 'Normál' : 'Alacsony'}
+                          </Text>
+                        </XStack>
+                        <Text fontSize={14} color="$color11">Státusz: {task.status}</Text>
+                        <Text fontSize={14} color="$color11">
+                          Határidő: {task.deadline
+                            ? `${new Date(task.deadline).toLocaleString()} (${Math.max(0, Math.round((new Date(task.deadline).getTime() - Date.now()) / 60000))} perc hátra)`
+                            : 'N/A'}
+                        </Text>
+                      </YStack>
                     </XStack>
-                    <Text fontSize={14} color="$color11">Státusz: {task.status}</Text>
-                    <Text fontSize={14} color="$color11">
-                      Határidő: {task.deadline
-                        ? `${new Date(task.deadline).toLocaleString()} (${Math.max(0, Math.round((new Date(task.deadline).getTime() - Date.now()) / 60000))} perc hátra)`
-                        : 'N/A'}
-                    </Text>
-                  </YStack>
-                </XStack>
-              </Card>
-            ))
+                  </Card>
+                </YStack>
+              );
+            })
           ) : (
             <YStack flex={1} gap="$3" justifyContent="center" alignItems="center">
               <Text fontSize={16} color="$color10" textAlign="center">
