@@ -1,8 +1,16 @@
 import React from "react";
 import { ScrollView, YStack, XStack, Button, H1, Text, Truck, PackagePlus, ScanBarcode, Warehouse, AlertTriangle } from "@repo/ui";
 import { router } from "expo-router";
+import { useState } from "react";
+import { Colors, useHeaderColors } from "@/constants";
+import { useColorScheme } from "@/hooks";
+
+/**
+ * Main dashboard screen with navigation to key features:
+ */
 
 export default function HomeScreen() {
+  const [role, setRole] = useState<string>('');
   return (
     <ScrollView flex={1} backgroundColor="$background">
       <YStack padding="$4" gap="$4">

@@ -8,6 +8,15 @@ import { logout, reauthenticateSilently } from './auth';
 
 let isSyncing = false;
 
+type InboundItemUpsertPayload = {
+  barcode: string;
+  quantityIncrement: number;
+  name?: string;
+  description?: string | null;
+  category_id?: number | null;
+  location_id?: number | null;
+};
+
 function isJwtToken(token: string): boolean {
   const parts = token.split('.');
   return parts.length === 3 && parts.every((part) => part.length > 0);
@@ -156,6 +165,87 @@ async function fetchTasksFromApi(): Promise<TaskComplete[]> {
   throw lastError || new Error('Failed to fetch tasks after retries');
 }
 
+function normalizeBarcode(value: string): string {
+  return value.trim().replace(/\s+/g, '').toLowerCase();
+}
+
+async function upsertInboundItem(
+  token: string,
+  apiUrl: string,
+  payload: InboundItemUpsertPayload
+): Promise<void> {
+  const barcode = payload.barcode?.trim();
+  if (!barcode) {
+    throw new Error('Missing barcode for inbound item upsert');
+  }
+
+  const quantityIncrement = Math.max(1, Math.floor(payload.quantityIncrement || 1));
+
+  const listResponse = await fetch(`${apiUrl}/items`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!listResponse.ok) {
+    const errorText = await listResponse.text().catch(() => 'Unknown error');
+    throw new Error(`Failed to fetch items for inbound sync: ${listResponse.status} - ${errorText}`);
+  }
+
+  const existingItems = await listResponse.json();
+  const existingItem = Array.isArray(existingItems)
+    ? existingItems.find((item: any) => normalizeBarcode(item?.barcode ?? '') === normalizeBarcode(barcode))
+    : null;
+
+  if (existingItem) {
+    const updatedQuantity = Math.max(0, Number(existingItem.quantity || 0)) + quantityIncrement;
+    const updateResponse = await fetch(`${apiUrl}/items/${existingItem.id}`, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: existingItem.name ?? payload.name ?? `Termék ${barcode}`,
+        barcode: existingItem.barcode ?? barcode,
+        description: existingItem.description ?? payload.description ?? null,
+        quantity: updatedQuantity,
+        category_id: existingItem.category_id ?? payload.category_id ?? null,
+        location_id: existingItem.location_id ?? payload.location_id ?? null,
+      }),
+    });
+
+    if (!updateResponse.ok) {
+      const errorText = await updateResponse.text().catch(() => 'Unknown error');
+      throw new Error(`Failed to update item ${existingItem.id}: ${updateResponse.status} - ${errorText}`);
+    }
+
+    return;
+  }
+
+  const createResponse = await fetch(`${apiUrl}/items`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      name: payload.name ?? `Beolvasott termék ${barcode}`,
+      barcode,
+      description: payload.description ?? null,
+      quantity: quantityIncrement,
+      category_id: payload.category_id ?? null,
+      location_id: payload.location_id ?? null,
+    }),
+  });
+
+  if (!createResponse.ok) {
+    const errorText = await createResponse.text().catch(() => 'Unknown error');
+    throw new Error(`Failed to create item for barcode ${barcode}: ${createResponse.status} - ${errorText}`);
+  }
+}
+
 /**
  * Push pending sync queue operations to API
  */
@@ -218,6 +308,18 @@ async function pushSyncQueue(token: string, apiUrl: string): Promise<void> {
           clearTimeout(timeoutId);
           console.warn(
             `⚠️  Failed to push operation ${operation.id} (attempt ${operation.retry_count + 1}):`,
+            apiError instanceof Error ? apiError.message : 'Unknown error'
+          );
+          await db.incrementSyncRetry(operation.id);
+        }
+      } else if (operation.entity_type === 'item' && operation.operation === 'UPSERT') {
+        try {
+          await upsertInboundItem(token, apiUrl, payload as InboundItemUpsertPayload);
+          console.log(`✅ Synced inbound item operation ${operation.id}`);
+          await db.removeSyncOperation(operation.id);
+        } catch (apiError) {
+          console.warn(
+            `⚠️  Failed to sync inbound item operation ${operation.id} (attempt ${operation.retry_count + 1}):`,
             apiError instanceof Error ? apiError.message : 'Unknown error'
           );
           await db.incrementSyncRetry(operation.id);
@@ -389,12 +491,13 @@ export async function getSyncStatus(): Promise<{
   }
 
   const lastSync = await db.getLastSyncTime();
+  const queue = await db.getSyncQueue();
 
   return {
     isSyncing,
     isOnline: online,
     lastSyncTime: lastSync,
-    pendingOperations: 0,
+    pendingOperations: queue.length,
   };
 }
 

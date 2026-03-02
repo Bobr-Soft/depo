@@ -1,14 +1,14 @@
 /**
  * Theme Configuration
- * 
+ *
  * This file defines the visual design system for the entire app.
  * All colors, spacing, typography, and shadows are centralized here.
- * 
+ *
  * HOW TO USE:
  * - Import colors: import { Colors } from '@/constants';
  * - Access in components: const colors = Colors[colorScheme];
  * - Always use theme values instead of hardcoded colors for consistency
- * 
+ *
  * HOW TO CUSTOMIZE:
  * - Modify color values below to change app appearance
  * - Both light and dark themes must be updated for consistency
@@ -21,11 +21,11 @@ export const Colors = {
     primary: '#6366F1',
     primaryLight: '#818CF8',
     secondary: '#EC4899',
-    background: '#F8FAFC',
+    background: '#FAFBFC',
     card: '#FFFFFF',
-    text: '#0F172A',
-    textSecondary: '#64748B',
-    border: '#E2E8F0',
+    text: '#131821',
+    textSecondary: '#5C6778',
+    border: '#D5DAE2',
     error: '#EF4444',
     success: '#10B981',
     warning: '#F59E0B',
@@ -35,11 +35,11 @@ export const Colors = {
     primary: '#818CF8',
     primaryLight: '#A5B4FC',
     secondary: '#F472B6',
-    background: '#0F172A',
-    card: '#1E293B',
-    text: '#F1F5F9',
-    textSecondary: '#94A3B8',
-    border: '#334155',
+    background: '#0B0D10',
+    card: '#161A1F',
+    text: '#F5F7FA',
+    textSecondary: '#9AA8BA',
+    border: '#323A45',
     error: '#F87171',
     success: '#34D399',
     warning: '#FBBF24',
@@ -49,12 +49,12 @@ export const Colors = {
 
 /**
  * Spacing Scale
- * 
+ *
  * Consistent spacing creates visual harmony. Use these values for:
  * - Padding and margins
  * - Gap between elements
  * - Component dimensions
- * 
+ *
  * USAGE: style={{ padding: Spacing.md, gap: Spacing.sm }}
  */
 export const Spacing = {
@@ -68,9 +68,9 @@ export const Spacing = {
 
 /**
  * Typography System
- * 
+ *
  * Defines font sizes and weights for consistent text hierarchy.
- * 
+ *
  * USAGE:
  * - Font sizes: fontSize: Typography.sizes.lg
  * - Font weights: fontWeight: Typography.weights.bold
@@ -95,10 +95,10 @@ export const Typography = {
 
 /**
  * Border Radius Scale
- * 
+ *
  * Consistent border radius for rounded corners.
  * Larger values = more rounded corners.
- * 
+ *
  * USAGE: borderRadius: BorderRadius.lg
  */
 export const BorderRadius = {
@@ -112,12 +112,12 @@ export const BorderRadius = {
 
 /**
  * Shadow Presets
- * 
+ *
  * Pre-configured shadows for depth and elevation.
  * Use elevation for Android, shadow properties for iOS.
- * 
+ *
  * USAGE: style={{ ...Shadows.md }}
- * 
+ *
  * SIZES:
  * - sm: Subtle shadow for small elements
  * - md: Medium shadow for cards and buttons
@@ -125,21 +125,21 @@ export const BorderRadius = {
  */
 export const Shadows = {
   sm: {
-    shadowColor: '#000',
+    shadowColor: '#101418',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.05,
     shadowRadius: 2,
     elevation: 2,
   },
   md: {
-    shadowColor: '#000',
+    shadowColor: '#101418',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 4,
   },
   lg: {
-    shadowColor: '#000',
+    shadowColor: '#101418',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.15,
     shadowRadius: 8,

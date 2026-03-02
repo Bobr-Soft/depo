@@ -1,0 +1,547 @@
+name: Todo Tree Issue Sync
+
+on:
+  push:
+    branches: [dev]
+    paths:
+      - 'TODO_TREE.md'
+      - '.github/CODEOWNERS'
+      - '.github/workflows/todo-tree-issues.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: todo-tree-issue-sync-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sync-todo-tree-issues:
+    name: Sync TODO_TREE.md to Issues
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Parse TODO tree and upsert issues
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const crypto = require('crypto');
+
+            const todoPath = path.join(process.env.GITHUB_WORKSPACE, 'TODO_TREE.md');
+            const codeownersPath = path.join(process.env.GITHUB_WORKSPACE, '.github', 'CODEOWNERS');
+
+            if (!fs.existsSync(todoPath)) {
+              core.setFailed('TODO_TREE.md was not found at repository root.');
+              return;
+            }
+
+            if (!fs.existsSync(codeownersPath)) {
+              core.setFailed('.github/CODEOWNERS was not found.');
+              return;
+            }
+
+            const todoContent = fs.readFileSync(todoPath, 'utf8');
+            const codeownersContent = fs.readFileSync(codeownersPath, 'utf8');
+
+            const repoOwner = context.repo.owner;
+            const repoName = context.repo.repo;
+            const branchName = context.ref.replace('refs/heads/', '');
+            const shortSha = context.sha.slice(0, 7);
+            const runUrl = `${context.payload.repository.html_url}/actions/runs/${context.runId}`;
+
+            const ensureLabel = async (name, color, description) => {
+              try {
+                await github.rest.issues.getLabel({ owner: repoOwner, repo: repoName, name });
+              } catch (error) {
+                if (error.status === 404) {
+                  await github.rest.issues.createLabel({ owner: repoOwner, repo: repoName, name, color, description });
+                  core.info(`Created label: ${name}`);
+                  return;
+                }
+                throw error;
+              }
+            };
+
+            const labelPalette = {
+              'todo-tree': ['6f42c1', 'Generated from TODO_TREE.md'],
+              'type:todo': ['1d76db', 'General TODO task'],
+              'type:bug': ['d73a4a', 'Bug task'],
+              'type:fixme': ['fbca04', 'Fix required'],
+              'type:hack': ['bfd4f2', 'Technical debt / hack'],
+              'priority:p0': ['b60205', 'Critical priority'],
+              'priority:p1': ['d93f0b', 'High priority'],
+              'priority:p2': ['fbca04', 'Medium priority'],
+              'priority:p3': ['0e8a16', 'Low priority'],
+              'area:mobile': ['0e8a16', 'Mobile app related'],
+              'area:api': ['5319e7', 'API related'],
+              'area:web': ['1d76db', 'Web app related'],
+              'area:db': ['0052cc', 'Database related'],
+              'area:contract': ['c5def5', 'Cross-app contract related'],
+              'area:e2e': ['f9d0c4', 'End-to-end tests'],
+              'area:observability': ['7057ff', 'Observability related'],
+              'area:docs': ['0075ca', 'Documentation related'],
+              'mobile': ['0e8a16', 'Mobile app'],
+              'api': ['5319e7', 'API app'],
+              'web': ['1d76db', 'Web app'],
+            };
+
+            for (const [name, [color, description]] of Object.entries(labelPalette)) {
+              await ensureLabel(name, color, description);
+            }
+
+            const parseCodeowners = (content) => {
+              const rules = [];
+              for (const rawLine of content.split(/\r?\n/)) {
+                const line = rawLine.trim();
+                if (!line || line.startsWith('#')) {
+                  continue;
+                }
+
+                const parts = line.split(/\s+/).filter(Boolean);
+                if (parts.length < 2) {
+                  continue;
+                }
+
+                const pattern = parts[0];
+                const owners = parts.slice(1).map((value) => value.replace(/^@/, ''));
+                rules.push({ pattern, owners });
+              }
+              return rules;
+            };
+
+            const wildcardToRegex = (pattern) => {
+              const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+              const regexString = '^' + escaped.replace(/\*/g, '.*') + '$';
+              return new RegExp(regexString);
+            };
+
+            const matchPattern = (pattern, targetPath) => {
+              const normalizedTarget = targetPath.startsWith('/') ? targetPath : `/${targetPath}`;
+
+              if (pattern === '*') {
+                return true;
+              }
+
+              if (pattern.endsWith('/**')) {
+                const prefix = pattern.slice(0, -3);
+                return normalizedTarget.startsWith(prefix);
+              }
+
+              if (pattern.endsWith('/')) {
+                return normalizedTarget.startsWith(pattern);
+              }
+
+              if (pattern.includes('*')) {
+                return wildcardToRegex(pattern).test(normalizedTarget);
+              }
+
+              return normalizedTarget === pattern || normalizedTarget.startsWith(`${pattern}/`);
+            };
+
+            const codeownersRules = parseCodeowners(codeownersContent);
+
+            const ownersForPath = (targetPath) => {
+              let matchedOwners = [];
+              for (const rule of codeownersRules) {
+                if (matchPattern(rule.pattern, targetPath)) {
+                  matchedOwners = rule.owners;
+                }
+              }
+              return matchedOwners;
+            };
+
+            const areaToPaths = {
+              MOBILE: ['/apps/mobile/'],
+              API: ['/apps/api/'],
+              WEB: ['/apps/web/'],
+              DB: ['/apps/api/'],
+              CONTRACT: ['/packages/'],
+              E2E: ['/.github/'],
+              OBSERVABILITY: ['/apps/api/', '/apps/mobile/'],
+              DOCS: ['/README.md', '/apps/mobile/OFFLINE_SYNC.md'],
+            };
+
+            const fallbackOwnerByArea = {
+              MOBILE: ['TibeeTheOnly'],
+              API: ['Barnabas05'],
+              WEB: ['Barnabas05'],
+              DB: ['Barnabas05'],
+            };
+
+            const parseTaskLine = (rawText) => {
+              const typeMatch = rawText.match(/^(TODO|BUG|FIXME|HACK)([^:]*):\s*(.+)$/i);
+              if (!typeMatch) {
+                return null;
+              }
+
+              const type = typeMatch[1].toUpperCase();
+              const metaPart = typeMatch[2] || '';
+              const title = typeMatch[3].trim();
+              const tags = Array.from(metaPart.matchAll(/\[([^\]]+)\]/g)).map((match) => match[1].trim());
+
+              const areas = [];
+              let priority = null;
+
+              for (const tag of tags) {
+                const upperTag = tag.toUpperCase();
+                if (/^P\d+$/.test(upperTag)) {
+                  priority = upperTag;
+                  continue;
+                }
+
+                if (upperTag.includes('+')) {
+                  for (const piece of upperTag.split('+').map((part) => part.trim()).filter(Boolean)) {
+                    if (!areas.includes(piece)) {
+                      areas.push(piece);
+                    }
+                  }
+                  continue;
+                }
+
+                if (!areas.includes(upperTag)) {
+                  areas.push(upperTag);
+                }
+              }
+
+              return { type, title, areas, priority };
+            };
+
+            const extractPathsFromTaskText = (text) => {
+              const found = [];
+              const normalizedText = text.replace(/`/g, ' ');
+              const pathRegex = /\/?apps\/[a-zA-Z0-9_./\-\[\]]+/g;
+              for (const match of normalizedText.matchAll(pathRegex)) {
+                const value = match[0].replace(/\\/g, '/');
+                const normalized = value.startsWith('/') ? value : `/${value}`;
+                if (!found.includes(normalized)) {
+                  found.push(normalized);
+                }
+              }
+              return found;
+            };
+
+            const lines = todoContent.split(/\r?\n/);
+            const stack = [];
+            const tasks = [];
+
+            for (let index = 0; index < lines.length; index += 1) {
+              const line = lines[index];
+              const itemMatch = line.match(/^(\s*)- \[( |x|X)\] (.+)$/);
+              if (!itemMatch) {
+                continue;
+              }
+
+              const indent = itemMatch[1].length;
+              const checked = itemMatch[2].toLowerCase() === 'x';
+              const text = itemMatch[3].trim();
+
+              while (stack.length && stack[stack.length - 1].indent >= indent) {
+                stack.pop();
+              }
+
+              const parent = stack.length ? stack[stack.length - 1] : null;
+              const parsed = parseTaskLine(text);
+
+              const inheritedAreas = parent?.meta?.areas ?? [];
+              const inheritedPriority = parent?.meta?.priority ?? null;
+
+              const effectiveAreas = parsed && parsed.areas.length > 0 ? parsed.areas : inheritedAreas;
+              const effectivePriority = parsed?.priority || inheritedPriority;
+
+              const currentTitle = parsed?.title ?? text;
+
+              const parentPath = parent?.path ?? [];
+              const titlePath = [...parentPath, currentTitle];
+
+              const meta = {
+                areas: effectiveAreas,
+                priority: effectivePriority,
+              };
+
+              stack.push({
+                indent,
+                title: currentTitle,
+                path: titlePath,
+                meta,
+              });
+
+              if (!parsed || checked) {
+                continue;
+              }
+
+              const normalizedPath = titlePath.join(' > ').toLowerCase().replace(/\s+/g, ' ').trim();
+              const taskId = crypto.createHash('sha1').update(normalizedPath).digest('hex');
+
+              tasks.push({
+                id: taskId,
+                type: parsed.type,
+                title: parsed.title,
+                areas: effectiveAreas,
+                priority: effectivePriority,
+                path: titlePath,
+                line: index + 1,
+                matchedPaths: extractPathsFromTaskText(parsed.title),
+              });
+            }
+
+            core.info(`Parsed unchecked tasks with tags: ${tasks.length}`);
+
+            const existingIssues = await github.paginate(github.rest.issues.listForRepo, {
+              owner: repoOwner,
+              repo: repoName,
+              state: 'all',
+              labels: 'todo-tree',
+              per_page: 100,
+            });
+
+            const existingByTaskId = new Map();
+            const existingOpenByTitle = new Map();
+
+            for (const issue of existingIssues) {
+              if (issue.pull_request) {
+                continue;
+              }
+
+              const body = issue.body || '';
+              const marker = body.match(/todo-tree-id:\s*([a-f0-9]{40})/i);
+              if (!marker) {
+                if (issue.state === 'open' && issue.title) {
+                  existingOpenByTitle.set(issue.title.trim().toLowerCase(), issue);
+                }
+                continue;
+              }
+
+              const id = marker[1].toLowerCase();
+              if (!existingByTaskId.has(id)) {
+                existingByTaskId.set(id, issue);
+                continue;
+              }
+
+              const current = existingByTaskId.get(id);
+              if (current.state !== 'open' && issue.state === 'open') {
+                existingByTaskId.set(id, issue);
+              }
+            }
+
+            const currentTaskIds = new Set(tasks.map((task) => task.id));
+            let createdCount = 0;
+            let updatedCount = 0;
+
+            const buildAssignees = (areas) => {
+              const areaList = (areas && areas.length > 0) ? areas : ['CONTRACT'];
+              const candidatePaths = areaList.flatMap((area) => areaToPaths[area] || []);
+              const owners = [];
+
+              for (const p of candidatePaths) {
+                for (const owner of ownersForPath(p)) {
+                  if (!owners.includes(owner)) {
+                    owners.push(owner);
+                  }
+                }
+              }
+
+              const users = owners.filter((owner) => !owner.includes('/'));
+
+              if (users.length > 0) {
+                return users;
+              }
+
+              const fallback = areaList.flatMap((area) => fallbackOwnerByArea[area] || []);
+              return [...new Set(fallback)];
+            };
+
+            const buildAssigneesFromTask = (task) => {
+              const owners = [];
+
+              for (const targetPath of task.matchedPaths || []) {
+                for (const owner of ownersForPath(targetPath)) {
+                  if (!owners.includes(owner)) {
+                    owners.push(owner);
+                  }
+                }
+              }
+
+              const usersFromPath = owners.filter((owner) => !owner.includes('/'));
+              if (usersFromPath.length > 0) {
+                return usersFromPath;
+              }
+
+              return buildAssignees(task.areas);
+            };
+
+            const buildLabels = (task) => {
+              const labels = ['todo-tree', `type:${task.type.toLowerCase()}`];
+
+              if (task.priority) {
+                labels.push(`priority:${task.priority.toLowerCase()}`);
+              }
+
+              for (const area of task.areas) {
+                labels.push(`area:${area.toLowerCase()}`);
+                if (['MOBILE', 'API', 'WEB'].includes(area)) {
+                  labels.push(area.toLowerCase());
+                }
+              }
+
+              return [...new Set(labels)];
+            };
+
+            for (const task of tasks) {
+              const areaPrefix = task.areas.length > 0 ? `[${task.areas.join('+')}]` : '[GENERAL]';
+              const priorityPrefix = task.priority ? `[${task.priority}]` : '[PX]';
+              const baseTitle = `${areaPrefix}${priorityPrefix} ${task.title}`;
+              const title = baseTitle.length > 250 ? `${baseTitle.slice(0, 247)}...` : baseTitle;
+              const labels = buildLabels(task);
+              const assignees = buildAssigneesFromTask(task);
+
+              const body = [
+                `Automated issue generated from TODO tree.`,
+                '',
+                `- Source file: \`TODO_TREE.md\``,
+                `- Source line: ${task.line}`,
+                `- Type: \`${task.type}\``,
+                `- Priority: \`${task.priority || 'N/A'}\``,
+                `- Areas: \`${task.areas.length ? task.areas.join(', ') : 'N/A'}\``,
+                `- Mentioned paths: \`${task.matchedPaths?.length ? task.matchedPaths.join(', ') : 'N/A'}\``,
+                `- Path: \`${task.path.join(' > ')}\``,
+                `- Branch: \`${branchName}\``,
+                `- Last sync commit: \`${shortSha}\``,
+                `- Workflow run: ${runUrl}`,
+                '',
+                '### Task',
+                task.title,
+                '',
+                `<!-- todo-tree-id: ${task.id} -->`,
+              ].join('\n');
+
+              const existing = existingByTaskId.get(task.id)
+                || existingOpenByTitle.get(title.trim().toLowerCase())
+                || null;
+
+              if (!existing) {
+                const created = await github.rest.issues.create({
+                  owner: repoOwner,
+                  repo: repoName,
+                  title,
+                  body,
+                  labels,
+                });
+
+                if (assignees.length > 0) {
+                  try {
+                    await github.rest.issues.addAssignees({
+                      owner: repoOwner,
+                      repo: repoName,
+                      issue_number: created.data.number,
+                      assignees,
+                    });
+                  } catch (assignError) {
+                    core.warning(`Unable to assign issue #${created.data.number}: ${assignError.message}`);
+                  }
+                }
+
+                createdCount += 1;
+                continue;
+              }
+
+              if (existing.state === 'closed') {
+                await github.rest.issues.update({
+                  owner: repoOwner,
+                  repo: repoName,
+                  issue_number: existing.number,
+                  state: 'open',
+                  title,
+                  body,
+                });
+
+                await github.rest.issues.createComment({
+                  owner: repoOwner,
+                  repo: repoName,
+                  issue_number: existing.number,
+                  body: `Reopened automatically because the task is unchecked again in TODO_TREE.md (commit ${shortSha} by @${context.actor}).`,
+                });
+
+                await github.rest.issues.setLabels({
+                  owner: repoOwner,
+                  repo: repoName,
+                  issue_number: existing.number,
+                  labels,
+                });
+
+                if (assignees.length > 0) {
+                  try {
+                    await github.rest.issues.addAssignees({
+                      owner: repoOwner,
+                      repo: repoName,
+                      issue_number: existing.number,
+                      assignees,
+                    });
+                  } catch (assignError) {
+                    core.warning(`Unable to assign reopened issue #${existing.number}: ${assignError.message}`);
+                  }
+                }
+
+                updatedCount += 1;
+                continue;
+              }
+
+              await github.rest.issues.update({
+                owner: repoOwner,
+                repo: repoName,
+                issue_number: existing.number,
+                title,
+                body,
+              });
+
+              await github.rest.issues.setLabels({
+                owner: repoOwner,
+                repo: repoName,
+                issue_number: existing.number,
+                labels,
+              });
+
+              if (assignees.length > 0) {
+                try {
+                  await github.rest.issues.addAssignees({
+                    owner: repoOwner,
+                    repo: repoName,
+                    issue_number: existing.number,
+                    assignees,
+                  });
+                } catch (assignError) {
+                  core.warning(`Unable to update assignees for issue #${existing.number}: ${assignError.message}`);
+                }
+              }
+
+              updatedCount += 1;
+            }
+
+            let closedCount = 0;
+            for (const [taskId, issue] of existingByTaskId.entries()) {
+              if (!currentTaskIds.has(taskId) && issue.state === 'open') {
+                await github.rest.issues.createComment({
+                  owner: repoOwner,
+                  repo: repoName,
+                  issue_number: issue.number,
+                  body: `Closing automatically because this task is checked off (or removed) in TODO_TREE.md.\n\nSynced from commit ${shortSha} by @${context.actor}.`,
+                });
+
+                await github.rest.issues.update({
+                  owner: repoOwner,
+                  repo: repoName,
+                  issue_number: issue.number,
+                  state: 'closed',
+                });
+
+                closedCount += 1;
+              }
+            }
+
+            core.info(`Todo sync summary: created=${createdCount}, updated=${updatedCount}, closed=${closedCount}`);

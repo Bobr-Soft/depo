@@ -43,7 +43,9 @@ export {
   Package,
   ClipboardX,
   ClipboardCheck,
-  Box
+  Box,
+  CircleChevronDown,
+  CircleChevronUp,
 } from '@tamagui/lucide-icons'
 
 

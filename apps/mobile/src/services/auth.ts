@@ -8,6 +8,7 @@ import {
   deleteUserEmail,
   setUserRole,
   deleteUserRole,
+  deleteUserPhotoUrl,
 } from './secureStorage';
 import { API_TIMEOUT, RETRY_CONFIG } from '@/constants/config';
 
@@ -153,7 +154,7 @@ export async function isAuthenticated(): Promise<boolean> {
  * Clear the JWT and user email from secure storage.
  */
 export async function logout(): Promise<void> {
-  await Promise.all([deleteToken(), deleteUserEmail(), deleteUserRole()]);
+  await Promise.all([deleteToken(), deleteUserEmail(), deleteUserRole(), deleteUserPhotoUrl()]);
 }
 
 /**

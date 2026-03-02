@@ -525,6 +525,89 @@ export async function incrementSyncRetry(id: number): Promise<void> {
 }
 
 /**
+ * Add a sync operation to the queue
+ */
+export async function enqueueSyncOperation(
+  operation: string,
+  entityType: string,
+  entityId: number | null,
+  payload: Record<string, unknown>
+): Promise<void> {
+  const database = getDb();
+
+  try {
+    await database.runAsync(
+      `INSERT INTO sync_queue (operation, entity_type, entity_id, payload, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      [operation, entityType, entityId, JSON.stringify(payload), Date.now()]
+    );
+  } catch (error) {
+    console.error('Failed to enqueue sync operation:', error);
+    throw error;
+  }
+}
+
+/**
+ * Find a local item by barcode
+ */
+export async function getItemByBarcode(barcode: string): Promise<any | null> {
+  const database = getDb();
+
+  try {
+    const normalizedBarcode = barcode.trim();
+    if (!normalizedBarcode) {
+      return null;
+    }
+
+    const result = await database.getFirstAsync<any>(
+      'SELECT * FROM items WHERE barcode = ? LIMIT 1',
+      [normalizedBarcode]
+    );
+    return result || null;
+  } catch (error) {
+    console.error('Failed to get item by barcode:', error);
+    return null;
+  }
+}
+
+/**
+ * Save or update a single item in local cache
+ */
+export async function saveItemToLocal(item: {
+  id: number;
+  name: string;
+  barcode?: string | null;
+  description?: string | null;
+  quantity: number;
+  category_id?: number | null;
+  location_id?: number | null;
+}): Promise<void> {
+  const database = getDb();
+
+  try {
+    await database.runAsync(
+      `INSERT OR REPLACE INTO items
+       (id, name, barcode, description, quantity, category_id, location_id, updated_at, created_at, synced)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+      [
+        item.id,
+        item.name,
+        item.barcode ?? null,
+        item.description ?? null,
+        item.quantity,
+        item.category_id ?? null,
+        item.location_id ?? null,
+        Date.now(),
+        Date.now(),
+      ]
+    );
+  } catch (error) {
+    console.error('Failed to save item to local database:', error);
+    throw error;
+  }
+}
+
+/**
  * Clear all synced data (for logout)
  */
 export async function clearDatabase(): Promise<void> {

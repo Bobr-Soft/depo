@@ -54,6 +54,119 @@ function isValidString(str, maxLength = 255) {
   return typeof str === 'string' && str.trim().length > 0 && str.length <= maxLength;
 }
 
+const itemsSchemaCache = {
+  value: null,
+};
+
+async function tableHasColumn(tableName, columnName) {
+  try {
+    const [rows] = await db.query(
+      `SHOW COLUMNS FROM \`${tableName}\` LIKE ?`,
+      [columnName]
+    );
+    return rows.length > 0;
+  } catch (error) {
+    return false;
+  }
+}
+
+async function getItemsSchemaCapabilities() {
+  if (itemsSchemaCache.value) {
+    return itemsSchemaCache.value;
+  }
+
+  const [
+    hasItemCategoryId,
+    hasItemLocationId,
+    hasCategoryName,
+    hasCategoryDescription,
+    hasLocationName,
+    hasLocationCode,
+    hasLocationDescription,
+  ] = await Promise.all([
+    tableHasColumn('items', 'category_id'),
+    tableHasColumn('items', 'location_id'),
+    tableHasColumn('categories', 'name'),
+    tableHasColumn('categories', 'description'),
+    tableHasColumn('locations', 'name'),
+    tableHasColumn('locations', 'location_code'),
+    tableHasColumn('locations', 'description'),
+  ]);
+
+  itemsSchemaCache.value = {
+    hasItemCategoryId,
+    hasItemLocationId,
+    hasCategoryName,
+    hasCategoryDescription,
+    hasLocationName,
+    hasLocationCode,
+    hasLocationDescription,
+  };
+
+  return itemsSchemaCache.value;
+}
+
+function getCategoryLabelExpr(capabilities) {
+  if (capabilities.hasCategoryName) {
+    return 'categories.name AS category';
+  }
+  if (capabilities.hasCategoryDescription) {
+    return 'categories.description AS category';
+  }
+  return 'NULL AS category';
+}
+
+function getLocationLabelExpr(capabilities) {
+  if (capabilities.hasLocationName) {
+    return 'locations.name AS location';
+  }
+  if (capabilities.hasLocationCode) {
+    return 'locations.location_code AS location';
+  }
+  if (capabilities.hasLocationDescription) {
+    return 'locations.description AS location';
+  }
+  return 'NULL AS location';
+}
+
+async function fetchItemsWithLabels(whereClause = '', params = []) {
+  const capabilities = await getItemsSchemaCapabilities();
+
+  const categoryIdExpr = capabilities.hasItemCategoryId
+    ? 'items.category_id'
+    : 'NULL AS category_id';
+  const locationIdExpr = capabilities.hasItemLocationId
+    ? 'items.location_id'
+    : 'NULL AS location_id';
+
+  const joins = [];
+  if (capabilities.hasItemCategoryId) {
+    joins.push('LEFT JOIN categories ON items.category_id = categories.id');
+  }
+  if (capabilities.hasItemLocationId) {
+    joins.push('LEFT JOIN locations ON items.location_id = locations.id');
+  }
+
+  const query = `
+    SELECT
+      items.id,
+      items.name,
+      items.barcode,
+      items.description,
+      items.quantity,
+      ${categoryIdExpr},
+      ${locationIdExpr},
+      ${getCategoryLabelExpr(capabilities)},
+      ${getLocationLabelExpr(capabilities)}
+    FROM items
+    ${joins.join('\n')}
+    ${whereClause}
+  `;
+
+  const [rows] = await db.query(query, params);
+  return rows;
+}
+
 // Auth middleware - strict database validation with fallback
 async function authenticateJWT(req, res, next) {
   const authHeader = req.headers.authorization;
@@ -177,19 +290,7 @@ app.get('/me', authenticateJWT, (req, res) => {
 app.get('/items', authenticateJWT, async (req, res) => {
   try {
     if (dbConnected) {
-      const [rows] = await db.query(`
-        SELECT
-          items.id,
-          items.name,
-          items.barcode,
-          items.description,
-          items.quantity,
-          categories.name AS category,
-          locations.name AS location
-        FROM items
-        LEFT JOIN categories ON items.category_id = categories.id
-        LEFT JOIN locations ON items.location_id = locations.id
-      `);
+      const rows = await fetchItemsWithLabels();
       res.json(rows);
     } else {
       res.status(503).json({ message: 'Database not available' });
@@ -210,28 +311,22 @@ app.post('/items', authenticateJWT, async (req, res) => {
 
   try {
     if (dbConnected) {
-      const [result] = await db.query(
-        'INSERT INTO items (name, barcode, description, quantity, category_id, location_id) VALUES (?, ?, ?, ?, ?, ?)',
-        [name, barcode, description, parseInt(quantity), category_id, location_id]
-      );
+      const capabilities = await getItemsSchemaCapabilities();
 
-      // Get the newly created item with category and location names
-      const [rows] = await db.query(`
-        SELECT
-          items.id,
-          items.name,
-          items.barcode,
-          items.description,
-          items.quantity,
-          items.category_id,
-          items.location_id,
-          categories.name AS category,
-          locations.name AS location
-        FROM items
-        LEFT JOIN categories ON items.category_id = categories.id
-        LEFT JOIN locations ON items.location_id = locations.id
-        WHERE items.id = ?
-      `, [result.insertId]);
+      let result;
+      if (capabilities.hasItemCategoryId && capabilities.hasItemLocationId) {
+        [result] = await db.query(
+          'INSERT INTO items (name, barcode, description, quantity, category_id, location_id) VALUES (?, ?, ?, ?, ?, ?)',
+          [name, barcode, description, parseInt(quantity), category_id, location_id]
+        );
+      } else {
+        [result] = await db.query(
+          'INSERT INTO items (name, barcode, description, quantity) VALUES (?, ?, ?, ?)',
+          [name, barcode, description, parseInt(quantity)]
+        );
+      }
+
+      const rows = await fetchItemsWithLabels('WHERE items.id = ?', [result.insertId]);
 
       res.json(rows[0]);
     } else {
@@ -252,30 +347,25 @@ app.put('/items/:id', authenticateJWT, async (req, res) => {
   }
 
   try {
-    await db.query(
-      `UPDATE items
-       SET name=?, barcode=?, description=?, quantity=?, category_id=?, location_id=?
-       WHERE id=?`,
-      [name, barcode, description, quantity, category_id, location_id, id]
-    );
+    const capabilities = await getItemsSchemaCapabilities();
 
-    // Get the updated item with category and location names
-    const [rows] = await db.query(`
-      SELECT
-        items.id,
-        items.name,
-        items.barcode,
-        items.description,
-        items.quantity,
-        items.category_id,
-        items.location_id,
-        categories.name AS category,
-        locations.name AS location
-      FROM items
-      LEFT JOIN categories ON items.category_id = categories.id
-      LEFT JOIN locations ON items.location_id = locations.id
-      WHERE items.id = ?
-    `, [id]);
+    if (capabilities.hasItemCategoryId && capabilities.hasItemLocationId) {
+      await db.query(
+        `UPDATE items
+         SET name=?, barcode=?, description=?, quantity=?, category_id=?, location_id=?
+         WHERE id=?`,
+        [name, barcode, description, quantity, category_id, location_id, id]
+      );
+    } else {
+      await db.query(
+        `UPDATE items
+         SET name=?, barcode=?, description=?, quantity=?
+         WHERE id=?`,
+        [name, barcode, description, quantity, id]
+      );
+    }
+
+    const rows = await fetchItemsWithLabels('WHERE items.id = ?', [id]);
 
     res.json(rows[0]);
   } catch (err) {
@@ -643,6 +733,17 @@ app.put('/tasks/:taskId/items/:itemId/picked', authenticateJWT, async (req, res)
          WHERE task_id = ? AND item_id = ?`,
         [parsedPickedQuantity, nextItemStatus, parsedTaskId, parsedItemId]
       );
+
+      // Subtract picked quantity from item stock
+      const quantityChange = parsedPickedQuantity - (taskItem.picked_quantity || 0);
+      if (quantityChange !== 0) {
+        await connection.query(
+          `UPDATE items
+           SET quantity = quantity - ?
+           WHERE id = ?`,
+          [quantityChange, parsedItemId]
+        );
+      }
 
       const [progressRows] = await connection.query(
         `SELECT COUNT(*) AS totalItems,
