@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
-  Avatar,
   Box,
   Button,
   Chip,
@@ -61,6 +60,22 @@ const statusMeta: Record<RequestStatus, { label: string; color: string }> = {
   delivered: { label: 'Teljesítve', color: '#22c55e' },
 };
 
+const resolvePickingErrorMessage = (status?: number, fallback = 'Hiba történt az adatbázis elérése közben.') => {
+  if (status === undefined) {
+    return 'Nem érhető el az API szerver. Ellenőrizd, hogy fut-e a backend és helyes-e a VITE_API_URL.';
+  }
+
+  if (status === 401 || status === 403) {
+    return 'A munkamenet lejárt vagy nincs jogosultság. Jelentkezz be újra.';
+  }
+
+  if (status === 503) {
+    return 'Az adatbázis jelenleg nem elérhető. Próbáld meg újra pár másodperc múlva.';
+  }
+
+  return fallback;
+};
+
 export default function PickingPage() {
   const theme = useTheme();
   const [line, setLine] = useState('SMT-01');
@@ -103,10 +118,14 @@ export default function PickingPage() {
         }));
 
         setCatalog(mapped);
+        setErrorMessage(null);
       } catch (error) {
         console.error('Failed to load picking catalog:', error);
         if (!cancelled) {
-          setErrorMessage('Nem sikerült betölteni a termékeket az adatbázisból.');
+          const status = (error as { response?: { status?: number } }).response?.status;
+          setErrorMessage(
+            resolvePickingErrorMessage(status, 'Nem sikerült betölteni a termékeket az adatbázisból.')
+          );
         }
       } finally {
         if (!cancelled) {
@@ -131,11 +150,15 @@ export default function PickingPage() {
         const response = await api.get('/material-requests', { params: { line } });
         if (!cancelled) {
           setActiveRequests(Array.isArray(response.data) ? response.data : []);
+          setErrorMessage(null);
         }
       } catch (error) {
         console.error('Failed to load material requests:', error);
         if (!cancelled) {
-          setErrorMessage('Nem sikerült betölteni a folyamatban lévő igényléseket.');
+          const status = (error as { response?: { status?: number } }).response?.status;
+          setErrorMessage(
+            resolvePickingErrorMessage(status, 'Nem sikerült betölteni a folyamatban lévő igényléseket.')
+          );
         }
       } finally {
         if (!cancelled) {
@@ -209,9 +232,11 @@ export default function PickingPage() {
 
       setCart({});
       setPriority('normal');
+      setErrorMessage(null);
     } catch (error) {
       console.error('Failed to submit material request:', error);
-      setErrorMessage('Az igénylés mentése nem sikerült. Próbáld újra.');
+      const status = (error as { response?: { status?: number } }).response?.status;
+      setErrorMessage(resolvePickingErrorMessage(status, 'Az igénylés mentése nem sikerült. Próbáld újra.'));
     } finally {
       setIsSubmitting(false);
     }

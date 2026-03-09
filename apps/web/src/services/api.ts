@@ -1,7 +1,29 @@
 import axios from 'axios';
 
 export const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL,
+  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:3000',
+});
+
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('authToken');
+  config.headers = config.headers ?? {};
+  const headers = config.headers as { Authorization?: string; set?: (name: string, value: string) => void; delete?: (name: string) => void };
+
+  if (token) {
+    if (typeof headers.set === 'function') {
+      headers.set('Authorization', `Bearer ${token}`);
+    } else {
+      headers.Authorization = `Bearer ${token}`;
+    }
+  } else {
+    if (typeof headers.delete === 'function') {
+      headers.delete('Authorization');
+    } else {
+      delete headers.Authorization;
+    }
+  }
+
+  return config;
 });
 
 // Automatikus autentikáció kezelés
@@ -19,5 +41,25 @@ api.interceptors.response.use(
 );
 
 export const setAuthToken = (token: string) => {
-  api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+  const commonHeaders = api.defaults.headers.common as {
+    Authorization?: string;
+    set?: (name: string, value: string) => void;
+    delete?: (name: string) => void;
+  };
+
+  if (token) {
+    if (typeof commonHeaders.set === 'function') {
+      commonHeaders.set('Authorization', `Bearer ${token}`);
+    } else {
+      commonHeaders.Authorization = `Bearer ${token}`;
+    }
+    return;
+  }
+
+  if (typeof commonHeaders.delete === 'function') {
+    commonHeaders.delete('Authorization');
+    return;
+  }
+
+  delete commonHeaders.Authorization;
 };
