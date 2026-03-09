@@ -1,16 +1,16 @@
 # PR Labeler Configuration
 # Labels PRs automatically based on changed files
 
-# App labels
-web:
+# Area labels
+area:web:
   - changed-files:
       - any-glob-to-any-file: 'apps/web/**'
 
-mobile:
+area:mobile:
   - changed-files:
       - any-glob-to-any-file: 'apps/mobile/**'
 
-api:
+area:api:
   - changed-files:
       - any-glob-to-any-file: 'apps/api/**'
 
@@ -24,7 +24,7 @@ ui:
       - any-glob-to-any-file: 'packages/ui/**'
 
 # Type labels
-documentation:
+area:docs:
   - changed-files:
       - any-glob-to-any-file:
           - '**/*.md'

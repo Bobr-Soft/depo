@@ -385,6 +385,156 @@ app.delete('/items/:id', authenticateJWT, requireAdmin, async (req, res) => {
   }
 });
 
+const materialRequestStatusMap = {
+  pending: 'pending',
+  in_progress: 'picking',
+  completed: 'delivered',
+};
+
+const normalizeMaterialRequestStatus = (status) => {
+  const key = String(status || '').toLowerCase();
+  return materialRequestStatusMap[key] || 'pending';
+};
+
+const normalizeMaterialRequestPriority = (value) => {
+  const raw = String(value || '').toLowerCase().trim();
+
+  if (raw === 'urgent' || raw === 'p1' || raw === '1') {
+    return 1;
+  }
+
+  return 3;
+};
+
+// Create material request task from web picking dashboard
+app.post('/material-requests', authenticateJWT, async (req, res) => {
+  const { line, priority, items } = req.body;
+
+  if (!isValidString(line, 64)) {
+    return res.status(400).json({ message: 'Invalid line value' });
+  }
+
+  if (!Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ message: 'At least one request item is required' });
+  }
+
+  const parsedItems = items
+    .map((item) => ({
+      itemId: Number.parseInt(String(item?.itemId), 10),
+      quantity: Number.parseInt(String(item?.quantity), 10),
+    }))
+    .filter((item) => Number.isInteger(item.itemId) && item.itemId > 0 && Number.isInteger(item.quantity) && item.quantity > 0);
+
+  if (parsedItems.length !== items.length) {
+    return res.status(400).json({ message: 'Invalid item payload' });
+  }
+
+  if (!dbConnected) {
+    return res.status(503).json({ message: 'Database not available' });
+  }
+
+  const connection = await db.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const itemIds = parsedItems.map((item) => item.itemId);
+    const placeholders = itemIds.map(() => '?').join(',');
+    const [existingItems] = await connection.query(
+      `SELECT id FROM items WHERE id IN (${placeholders})`,
+      itemIds
+    );
+
+    const existingItemIds = new Set(existingItems.map((item) => item.id));
+    const missingItem = parsedItems.find((item) => !existingItemIds.has(item.itemId));
+    if (missingItem) {
+      await connection.rollback();
+      return res.status(404).json({ message: `Item not found: ${missingItem.itemId}` });
+    }
+
+    const requestPriority = normalizeMaterialRequestPriority(priority);
+    const taskName = `Anyagigénylés - ${line}`;
+
+    const [taskResult] = await connection.query(
+      `INSERT INTO tasks (name, type, source_id, assigned_user, status, priority, deadline, created_at, updated_at)
+       VALUES (?, 'material_request', ?, NULL, 'pending', ?, NULL, NOW(), NOW())`,
+      [taskName, line, requestPriority]
+    );
+
+    const taskId = taskResult.insertId;
+
+    for (const item of parsedItems) {
+      await connection.query(
+        `INSERT INTO task_items (task_id, item_id, requested_quantity, picked_quantity, status)
+         VALUES (?, ?, ?, 0, 'pending')`,
+        [taskId, item.itemId, item.quantity]
+      );
+    }
+
+    await connection.commit();
+
+    return res.status(201).json({
+      id: taskId,
+      line,
+      priority: requestPriority,
+      status: 'pending',
+      totalItems: parsedItems.length,
+    });
+  } catch (err) {
+    await connection.rollback();
+    console.error('❌ Error creating material request:', err.message);
+    return res.status(500).json({ message: 'Database error' });
+  } finally {
+    connection.release();
+  }
+});
+
+// List material request tasks for a production line (web dashboard live tracking)
+app.get('/material-requests', authenticateJWT, async (req, res) => {
+  const { line } = req.query;
+
+  if (!isValidString(String(line || ''), 64)) {
+    return res.status(400).json({ message: 'line query parameter is required' });
+  }
+
+  if (!dbConnected) {
+    return res.status(503).json({ message: 'Database not available' });
+  }
+
+  try {
+    const [rows] = await db.query(
+      `SELECT
+        t.id,
+        t.source_id AS line,
+        t.status,
+        t.priority,
+        t.created_at,
+        COUNT(ti.id) AS total_items
+      FROM tasks t
+      LEFT JOIN task_items ti ON ti.task_id = t.id
+      WHERE t.type = 'material_request' AND t.source_id = ?
+      GROUP BY t.id, t.source_id, t.status, t.priority, t.created_at
+      ORDER BY t.created_at DESC
+      LIMIT 25`,
+      [String(line)]
+    );
+
+    const payload = rows.map((row) => ({
+      id: `REQ-${row.id}`,
+      line: row.line,
+      status: normalizeMaterialRequestStatus(row.status),
+      priority: Number(row.priority) === 1 ? 'urgent' : 'normal',
+      totalItems: Number(row.total_items) || 0,
+      createdAt: row.created_at,
+    }));
+
+    return res.json(payload);
+  } catch (err) {
+    console.error('❌ Error fetching material requests:', err.message);
+    return res.status(500).json({ message: 'Database error' });
+  }
+});
+
 app.get('/users', authenticateJWT, async (req, res) => {
   try {
     if (dbConnected) {

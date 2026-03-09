@@ -353,6 +353,7 @@ export default function InboundScreen() {
         );
       } else {
         Alert.alert("Mentés sikeres", `${batchSummary.successful} tétel mentve.`);
+        router.replace("/");
       }
     } catch (error) {
       console.error("Failed to save inbound scanned items:", error);
