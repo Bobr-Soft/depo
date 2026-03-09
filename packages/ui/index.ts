@@ -46,6 +46,7 @@ export {
   Box,
   CircleChevronDown,
   CircleChevronUp,
+  CheckCircle
 } from '@tamagui/lucide-icons'
 
 

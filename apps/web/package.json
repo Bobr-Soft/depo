@@ -19,6 +19,7 @@
     "@toolpad/core": "^0.16.0",
     "axios": "^1.12.2",
     "bootstrap": "^5.3.8",
+    "lucide-react": "^0.542.0",
     "ogl": "^1.0.11",
     "react": "^19.1.1",
     "react-csv": "^2.2.2",
