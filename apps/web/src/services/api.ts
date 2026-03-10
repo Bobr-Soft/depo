@@ -7,6 +7,8 @@ const normalizeBaseUrl = (value?: string) => {
 
 export const api = axios.create({
   baseURL: normalizeBaseUrl(import.meta.env.VITE_API_URL),
+  timeout: 20000,
+  timeoutErrorMessage: 'Backend request timed out. Please try again.',
 });
 
 api.interceptors.request.use((config) => {

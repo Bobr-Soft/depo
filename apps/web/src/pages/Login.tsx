@@ -14,9 +14,15 @@ interface LoginProps {
 export const Login = ({ onLogin }: LoginProps) => {
   const { instance } = useMsal();
   const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
 
   const handleLogin = async () => {
     try {
+      if (isLoading) {
+        return;
+      }
+
+      setIsLoading(true);
       setError(null);
       console.log('🔄 Starting Entra ID login...');
 
@@ -51,16 +57,22 @@ export const Login = ({ onLogin }: LoginProps) => {
       onLogin(token, { name, email, image, role });
 
     } catch (err: unknown) {
-      const error = err as { response?: { status: number; data?: { message: string } }; message: string };
+      const error = err as { response?: { status: number; data?: { message: string } }; code?: string; message: string };
       console.error('❌ Login error:', error);
 
       if (error.response?.status === 403) {
         setError('Access denied: Your account is not authorized to access this system. Please contact your administrator.');
       } else if (error.response?.status === 503) {
         setError('System temporarily unavailable. Please try again later.');
+      } else if (error.code === 'ECONNABORTED' || String(error.message || '').toLowerCase().includes('timeout')) {
+        setError('Backend timeout. The server may be waking up. Please try again in a few seconds.');
+      } else if (!error.response) {
+        setError('Network error while contacting backend. Check API URL and CORS settings.');
       } else {
         setError(error.response?.data?.message || error.message || 'Login failed. Please try again.');
       }
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -86,7 +98,9 @@ export const Login = ({ onLogin }: LoginProps) => {
         <h1>Leltár alkalmazás</h1>
         <p>Bejelentkezés iskolai e-mail címmel</p>
 
-        <button onClick={handleLogin}>Bejelentkezés</button>
+        <button onClick={handleLogin} disabled={isLoading}>
+          {isLoading ? 'Bejelentkezés...' : 'Bejelentkezés'}
+        </button>
         <p style={{ fontSize: '12px', marginTop: '10px', opacity: 0.7 }}>Secure Azure AD Authentication</p>
 
         {error && <div className={styles.errorMessage}>{error}</div>}
