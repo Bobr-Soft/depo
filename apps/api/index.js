@@ -102,13 +102,44 @@ const itemsSchemaCache = {
   value: null,
 };
 
+const usersSchemaCache = {
+  value: null,
+};
+
+const tasksSchemaCache = {
+  value: null,
+};
+
+const categoriesSchemaCache = {
+  value: null,
+};
+
+const locationsSchemaCache = {
+  value: null,
+};
+
 async function tableHasColumn(tableName, columnName) {
   try {
     const [rows] = await db.query(
+      `SELECT 1
+       FROM information_schema.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE()
+         AND TABLE_NAME = ?
+         AND LOWER(COLUMN_NAME) = LOWER(?)
+       LIMIT 1`,
+      [tableName, columnName]
+    );
+
+    if (rows.length > 0) {
+      return true;
+    }
+
+    const [fallbackRows] = await db.query(
       `SHOW COLUMNS FROM \`${tableName}\` LIKE ?`,
       [columnName]
     );
-    return rows.length > 0;
+
+    return fallbackRows.length > 0;
   } catch (error) {
     return false;
   }
@@ -148,6 +179,166 @@ async function getItemsSchemaCapabilities() {
   };
 
   return itemsSchemaCache.value;
+}
+
+async function getUsersSchemaCapabilities() {
+  if (usersSchemaCache.value) {
+    return usersSchemaCache.value;
+  }
+
+  const [hasIsActive, hasIsActiveSnake, hasPassword] = await Promise.all([
+    tableHasColumn('users', 'isActive'),
+    tableHasColumn('users', 'is_active'),
+    tableHasColumn('users', 'password'),
+  ]);
+
+  usersSchemaCache.value = {
+    hasIsActive,
+    hasIsActiveSnake,
+    hasPassword,
+  };
+
+  return usersSchemaCache.value;
+}
+
+function getUsersIsActiveSelectExpr(capabilities) {
+  if (capabilities.hasIsActive) {
+    return 'isActive';
+  }
+
+  if (capabilities.hasIsActiveSnake) {
+    return 'is_active AS isActive';
+  }
+
+  return '1 AS isActive';
+}
+
+function getUsersIsActiveColumnName(capabilities) {
+  if (capabilities.hasIsActive) {
+    return 'isActive';
+  }
+
+  if (capabilities.hasIsActiveSnake) {
+    return 'is_active';
+  }
+
+  return null;
+}
+
+async function getCategoriesSchemaCapabilities() {
+  if (categoriesSchemaCache.value) {
+    return categoriesSchemaCache.value;
+  }
+
+  const [hasDescription, hasSizeClass, hasMinStockLevel] = await Promise.all([
+    tableHasColumn('categories', 'description'),
+    tableHasColumn('categories', 'size_class'),
+    tableHasColumn('categories', 'min_stock_level'),
+  ]);
+
+  categoriesSchemaCache.value = {
+    hasDescription,
+    hasSizeClass,
+    hasMinStockLevel,
+  };
+
+  return categoriesSchemaCache.value;
+}
+
+function getCategoryDescriptionSelectExpr(capabilities) {
+  if (capabilities.hasDescription) {
+    return 'description';
+  }
+
+  if (capabilities.hasSizeClass) {
+    return 'size_class AS description';
+  }
+
+  return 'NULL AS description';
+}
+
+async function getLocationsSchemaCapabilities() {
+  if (locationsSchemaCache.value) {
+    return locationsSchemaCache.value;
+  }
+
+  const [
+    hasName,
+    hasDescription,
+    hasLocationCode,
+    hasRowNum,
+    hasColNum,
+    hasShelfLevel,
+    hasIsXl,
+    hasIsActive,
+  ] = await Promise.all([
+    tableHasColumn('locations', 'name'),
+    tableHasColumn('locations', 'description'),
+    tableHasColumn('locations', 'location_code'),
+    tableHasColumn('locations', 'row_num'),
+    tableHasColumn('locations', 'col_num'),
+    tableHasColumn('locations', 'shelf_level'),
+    tableHasColumn('locations', 'is_xl'),
+    tableHasColumn('locations', 'is_active'),
+  ]);
+
+  locationsSchemaCache.value = {
+    hasName,
+    hasDescription,
+    hasLocationCode,
+    hasRowNum,
+    hasColNum,
+    hasShelfLevel,
+    hasIsXl,
+    hasIsActive,
+  };
+
+  return locationsSchemaCache.value;
+}
+
+function getLocationNameSelectExpr(capabilities) {
+  if (capabilities.hasName) {
+    return 'name';
+  }
+
+  if (capabilities.hasLocationCode) {
+    return 'location_code AS name';
+  }
+
+  return "CONCAT('Location-', id) AS name";
+}
+
+function getLocationDescriptionSelectExpr(capabilities) {
+  if (capabilities.hasDescription) {
+    return 'description';
+  }
+
+  if (capabilities.hasLocationCode) {
+    return 'location_code AS description';
+  }
+
+  return 'NULL AS description';
+}
+
+function normalizeIncomingRole(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) {
+    return 'worker';
+  }
+
+  if (raw === 'admin') {
+    return 'admin';
+  }
+
+  if (raw === 'teacher' || raw === 'operator' || raw === 'user') {
+    return 'worker';
+  }
+
+  if (raw === 'supervisor' || raw === 'worker') {
+    return raw;
+  }
+
+  return 'worker';
 }
 
 function getCategoryLabelExpr(capabilities) {
@@ -483,6 +674,53 @@ const normalizeMaterialRequestUpdateStatus = (status) => {
   return materialRequestUpdateStatusMap[raw] || null;
 };
 
+const MATERIAL_REQUEST_NAME_PREFIX = 'Anyagigénylés - ';
+
+async function getTasksSchemaCapabilities() {
+  if (tasksSchemaCache.value) {
+    return tasksSchemaCache.value;
+  }
+
+  let hasMaterialRequestType = false;
+
+  try {
+    const [rows] = await db.query(
+      `SELECT COLUMN_TYPE
+       FROM information_schema.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE()
+         AND TABLE_NAME = 'tasks'
+         AND LOWER(COLUMN_NAME) = 'type'
+       LIMIT 1`
+    );
+
+    const columnType = String(rows?.[0]?.COLUMN_TYPE || '').toLowerCase();
+    hasMaterialRequestType = columnType.includes('material_request');
+  } catch (error) {
+    hasMaterialRequestType = false;
+  }
+
+  tasksSchemaCache.value = { hasMaterialRequestType };
+  return tasksSchemaCache.value;
+}
+
+function getMaterialRequestTaskType(capabilities) {
+  return capabilities.hasMaterialRequestType ? 'material_request' : 'picking';
+}
+
+function getMaterialRequestTaskFilter(prefix, capabilities) {
+  const scopedPrefix = prefix ? `${prefix}.` : '';
+  const taskType = getMaterialRequestTaskType(capabilities);
+  const params = [taskType];
+
+  let clause = `${scopedPrefix}type = ?`;
+  if (!capabilities.hasMaterialRequestType) {
+    clause += ` AND ${scopedPrefix}name LIKE ?`;
+    params.push(`${MATERIAL_REQUEST_NAME_PREFIX}%`);
+  }
+
+  return { clause, params };
+}
+
 // Create material request task from web picking dashboard
 app.post('/material-requests', authenticateJWT, async (req, res) => {
   const { line, priority, items } = req.body;
@@ -515,6 +753,9 @@ app.post('/material-requests', authenticateJWT, async (req, res) => {
   try {
     await connection.beginTransaction();
 
+    const taskSchemaCapabilities = await getTasksSchemaCapabilities();
+    const materialRequestTaskType = getMaterialRequestTaskType(taskSchemaCapabilities);
+
     const itemIds = parsedItems.map((item) => item.itemId);
     const placeholders = itemIds.map(() => '?').join(',');
     const [existingItems] = await connection.query(
@@ -534,8 +775,8 @@ app.post('/material-requests', authenticateJWT, async (req, res) => {
 
     const [taskResult] = await connection.query(
       `INSERT INTO tasks (name, type, source_id, assigned_user, status, priority, deadline, created_at, updated_at)
-       VALUES (?, 'material_request', ?, NULL, 'pending', ?, NULL, NOW(), NOW())`,
-      [taskName, line, requestPriority]
+       VALUES (?, ?, ?, NULL, 'pending', ?, NULL, NOW(), NOW())`,
+      [taskName, materialRequestTaskType, line, requestPriority]
     );
 
     const taskId = taskResult.insertId;
@@ -579,6 +820,9 @@ app.get('/material-requests', authenticateJWT, async (req, res) => {
   }
 
   try {
+    const taskSchemaCapabilities = await getTasksSchemaCapabilities();
+    const materialRequestFilter = getMaterialRequestTaskFilter('t', taskSchemaCapabilities);
+
     const [rows] = await db.query(
       `SELECT
         t.id,
@@ -589,11 +833,11 @@ app.get('/material-requests', authenticateJWT, async (req, res) => {
         COUNT(ti.id) AS total_items
       FROM tasks t
       LEFT JOIN task_items ti ON ti.task_id = t.id
-      WHERE t.type = 'material_request' AND t.source_id = ?
+      WHERE ${materialRequestFilter.clause} AND t.source_id = ?
       GROUP BY t.id, t.source_id, t.status, t.priority, t.created_at
       ORDER BY t.created_at DESC
       LIMIT 25`,
-      [String(line)]
+      [...materialRequestFilter.params, String(line)]
     );
 
     const payload = rows.map((row) => ({
@@ -619,13 +863,17 @@ app.get('/material-requests/metrics', authenticateJWT, requireAdmin, async (req,
   }
 
   try {
+    const taskSchemaCapabilities = await getTasksSchemaCapabilities();
+    const materialRequestFilter = getMaterialRequestTaskFilter('t', taskSchemaCapabilities);
+
     const [rows] = await db.query(
       `SELECT
         SUM(CASE WHEN t.status IN ('pending', 'in_progress') THEN 1 ELSE 0 END) AS active_requests,
         SUM(CASE WHEN t.status IN ('pending', 'in_progress') AND t.priority = 1 THEN 1 ELSE 0 END) AS urgent_requests,
         COUNT(*) AS total_requests
       FROM tasks t
-      WHERE t.type = 'material_request'`
+      WHERE ${materialRequestFilter.clause}`,
+      materialRequestFilter.params
     );
 
     const metrics = rows[0] || {};
@@ -648,6 +896,9 @@ app.get('/material-requests/all', authenticateJWT, requireAdmin, async (req, res
   }
 
   try {
+    const taskSchemaCapabilities = await getTasksSchemaCapabilities();
+    const materialRequestFilter = getMaterialRequestTaskFilter('t', taskSchemaCapabilities);
+
     const [rows] = await db.query(
       `SELECT
         t.id,
@@ -664,9 +915,10 @@ app.get('/material-requests/all', authenticateJWT, requireAdmin, async (req, res
       FROM tasks t
       LEFT JOIN users u ON u.id = t.assigned_user
       LEFT JOIN task_items ti ON ti.task_id = t.id
-      WHERE t.type = 'material_request'
+      WHERE ${materialRequestFilter.clause}
       GROUP BY t.id, t.name, t.source_id, t.status, t.priority, t.assigned_user, u.email, t.created_at, t.updated_at
-      ORDER BY t.created_at DESC`
+      ORDER BY t.created_at DESC`,
+      materialRequestFilter.params
     );
 
     return res.json(
@@ -703,6 +955,9 @@ app.get('/material-requests/:requestId', authenticateJWT, async (req, res) => {
   }
 
   try {
+    const taskSchemaCapabilities = await getTasksSchemaCapabilities();
+    const materialRequestFilter = getMaterialRequestTaskFilter('t', taskSchemaCapabilities);
+
     const [taskRows] = await db.query(
       `SELECT
         t.id,
@@ -716,9 +971,9 @@ app.get('/material-requests/:requestId', authenticateJWT, async (req, res) => {
         t.updated_at
       FROM tasks t
       LEFT JOIN users u ON u.id = t.assigned_user
-      WHERE t.id = ? AND t.type = 'material_request'
+      WHERE t.id = ? AND ${materialRequestFilter.clause}
       LIMIT 1`,
-      [taskId]
+      [taskId, ...materialRequestFilter.params]
     );
 
     if (!taskRows.length) {
@@ -793,6 +1048,9 @@ app.put('/material-requests/:requestId/assign', authenticateJWT, requireAdmin, a
   }
 
   try {
+    const taskSchemaCapabilities = await getTasksSchemaCapabilities();
+    const materialRequestFilter = getMaterialRequestTaskFilter('', taskSchemaCapabilities);
+
     if (normalizedAssignedUserId !== null) {
       const [userRows] = await db.query('SELECT id, email FROM users WHERE id = ? LIMIT 1', [normalizedAssignedUserId]);
       if (!userRows.length) {
@@ -803,8 +1061,8 @@ app.put('/material-requests/:requestId/assign', authenticateJWT, requireAdmin, a
     const [result] = await db.query(
       `UPDATE tasks
        SET assigned_user = ?, updated_at = NOW()
-       WHERE id = ? AND type = 'material_request'`,
-      [normalizedAssignedUserId, taskId]
+       WHERE id = ? AND ${materialRequestFilter.clause}`,
+      [normalizedAssignedUserId, taskId, ...materialRequestFilter.params]
     );
 
     if (result.affectedRows === 0) {
@@ -850,11 +1108,14 @@ app.put('/material-requests/:requestId/status', authenticateJWT, requireAdmin, a
   }
 
   try {
+    const taskSchemaCapabilities = await getTasksSchemaCapabilities();
+    const materialRequestFilter = getMaterialRequestTaskFilter('', taskSchemaCapabilities);
+
     const [result] = await db.query(
       `UPDATE tasks
        SET status = ?, updated_at = NOW()
-       WHERE id = ? AND type = 'material_request'`,
-      [nextStatus, taskId]
+       WHERE id = ? AND ${materialRequestFilter.clause}`,
+      [nextStatus, taskId, ...materialRequestFilter.params]
     );
 
     if (result.affectedRows === 0) {
@@ -907,12 +1168,15 @@ app.put('/material-requests/:requestId', authenticateJWT, requireAdmin, async (r
   try {
     await connection.beginTransaction();
 
+    const taskSchemaCapabilities = await getTasksSchemaCapabilities();
+    const materialRequestFilter = getMaterialRequestTaskFilter('', taskSchemaCapabilities);
+
     const [taskRows] = await connection.query(
       `SELECT id, status, assigned_user
        FROM tasks
-       WHERE id = ? AND type = 'material_request'
+       WHERE id = ? AND ${materialRequestFilter.clause}
        LIMIT 1 FOR UPDATE`,
-      [taskId]
+      [taskId, ...materialRequestFilter.params]
     );
 
     if (!taskRows.length) {
@@ -1002,12 +1266,15 @@ app.post('/material-requests/:requestId/cancel', authenticateJWT, async (req, re
   }
 
   try {
+    const taskSchemaCapabilities = await getTasksSchemaCapabilities();
+    const materialRequestFilter = getMaterialRequestTaskFilter('', taskSchemaCapabilities);
+
     const [taskRows] = await db.query(
       `SELECT id, status
        FROM tasks
-       WHERE id = ? AND type = 'material_request'
+       WHERE id = ? AND ${materialRequestFilter.clause}
        LIMIT 1`,
-      [taskId]
+      [taskId, ...materialRequestFilter.params]
     );
 
     if (!taskRows.length) {
@@ -1018,7 +1285,10 @@ app.post('/material-requests/:requestId/cancel', authenticateJWT, async (req, re
       return res.status(409).json({ message: 'Only pending requests can be cancelled' });
     }
 
-    await db.query('DELETE FROM tasks WHERE id = ? AND type = ?', [taskId, 'material_request']);
+    await db.query(
+      `DELETE FROM tasks WHERE id = ? AND ${materialRequestFilter.clause}`,
+      [taskId, ...materialRequestFilter.params]
+    );
 
     return res.json({
       id: `REQ-${taskId}`,
@@ -1042,7 +1312,12 @@ app.delete('/material-requests/:requestId', authenticateJWT, requireAdmin, async
   }
 
   try {
-    const [result] = await db.query('DELETE FROM tasks WHERE id = ? AND type = ?', [taskId, 'material_request']);
+    const taskSchemaCapabilities = await getTasksSchemaCapabilities();
+    const materialRequestFilter = getMaterialRequestTaskFilter('', taskSchemaCapabilities);
+    const [result] = await db.query(
+      `DELETE FROM tasks WHERE id = ? AND ${materialRequestFilter.clause}`,
+      [taskId, ...materialRequestFilter.params]
+    );
 
     if (result.affectedRows === 0) {
       return res.status(404).json({ message: 'Material request not found' });
@@ -1061,7 +1336,8 @@ app.delete('/material-requests/:requestId', authenticateJWT, requireAdmin, async
 app.get('/users', authenticateJWT, async (req, res) => {
   try {
     if (dbConnected) {
-      const [rows] = await db.query('SELECT id, email, role, isActive FROM users');
+      const capabilities = await getUsersSchemaCapabilities();
+      const [rows] = await db.query(`SELECT id, email, role, ${getUsersIsActiveSelectExpr(capabilities)} FROM users`);
       const usersWithUsername = rows.map((user) => buildUserResponse(user));
       res.json(usersWithUsername);
     } else {
@@ -1082,13 +1358,34 @@ app.post('/users', authenticateJWT, requireAdmin, async (req, res) => {
 
   try {
     if (dbConnected) {
-      const normalizedRole = role ? role.toLowerCase() : 'teacher';
+      const capabilities = await getUsersSchemaCapabilities();
+      const isActiveColumn = getUsersIsActiveColumnName(capabilities);
+      const normalizedRole = normalizeIncomingRole(role);
       const normalizedIsActive = isActive !== undefined ? (isActive ? 1 : 0) : 1;
+
+      const insertFields = ['email', 'role'];
+      const insertValues = [email, normalizedRole];
+
+      if (capabilities.hasPassword) {
+        insertFields.push('password');
+        insertValues.push(password || null);
+      }
+
+      if (isActiveColumn) {
+        insertFields.push(isActiveColumn);
+        insertValues.push(normalizedIsActive);
+      }
+
+      const placeholders = insertFields.map(() => '?').join(', ');
       const [result] = await db.query(
-        'INSERT INTO users (email, password, role, isActive) VALUES (?, ?, ?, ?)',
-        [email, password, normalizedRole, normalizedIsActive]
+        `INSERT INTO users (${insertFields.join(', ')}) VALUES (${placeholders})`,
+        insertValues
       );
-      const [rows] = await db.query('SELECT id, email, role, isActive FROM users WHERE id = ?', [result.insertId]);
+
+      const [rows] = await db.query(
+        `SELECT id, email, role, ${getUsersIsActiveSelectExpr(capabilities)} FROM users WHERE id = ?`,
+        [result.insertId]
+      );
       const userWithUsername = buildUserResponse(rows[0]);
       res.json(userWithUsername);
     } else {
@@ -1111,15 +1408,28 @@ app.put('/users/:id', authenticateJWT, requireAdmin, async (req, res) => {
   console.log('📝 Updating user:', { id, email, role, isActive, type: typeof isActive });
   try {
     if (dbConnected) {
-      const normalizedRole = role ? role.toLowerCase() : 'teacher';
+      const capabilities = await getUsersSchemaCapabilities();
+      const isActiveColumn = getUsersIsActiveColumnName(capabilities);
+      const normalizedRole = normalizeIncomingRole(role);
       const normalizedIsActive = isActive !== undefined ? (isActive ? 1 : 0) : 1;
       console.log('📝 Normalized values:', { normalizedRole, normalizedIsActive });
+
+      const updateAssignments = ['email=?', 'role=?'];
+      const updateValues = [email, normalizedRole];
+      if (isActiveColumn) {
+        updateAssignments.push(`${isActiveColumn}=?`);
+        updateValues.push(normalizedIsActive);
+      }
+
       const [result] = await db.query(
-        'UPDATE users SET email=?, role=?, isActive=? WHERE id=?',
-        [email, normalizedRole, normalizedIsActive, id]
+        `UPDATE users SET ${updateAssignments.join(', ')} WHERE id=?`,
+        [...updateValues, id]
       );
       console.log('📝 Update result:', result);
-      const [rows] = await db.query('SELECT id, email, role, isActive FROM users WHERE id = ?', [id]);
+      const [rows] = await db.query(
+        `SELECT id, email, role, ${getUsersIsActiveSelectExpr(capabilities)} FROM users WHERE id = ?`,
+        [id]
+      );
       const userWithUsername = buildUserResponse(rows[0]);
       res.json(userWithUsername);
     } else {
@@ -1150,7 +1460,10 @@ app.delete('/users/:id', authenticateJWT, requireAdmin, async (req, res) => {
 app.get('/categories', authenticateJWT, async (req, res) => {
   try {
     if (dbConnected) {
-      const [rows] = await db.query('SELECT * FROM categories');
+      const capabilities = await getCategoriesSchemaCapabilities();
+      const [rows] = await db.query(
+        `SELECT id, name, ${getCategoryDescriptionSelectExpr(capabilities)} FROM categories`
+      );
       res.json(rows);
     } else {
       res.status(503).json({ message: 'Database not available' });
@@ -1170,8 +1483,27 @@ app.post('/categories', authenticateJWT, requireAdmin, async (req, res) => {
 
   try {
     if (dbConnected) {
-      const [result] = await db.query('INSERT INTO categories (name, description) VALUES (?, ?)', [name, description]);
-      const [rows] = await db.query('SELECT * FROM categories WHERE id = ?', [result.insertId]);
+      const capabilities = await getCategoriesSchemaCapabilities();
+      const insertFields = ['name'];
+      const insertValues = [name];
+
+      if (capabilities.hasDescription) {
+        insertFields.push('description');
+        insertValues.push(description ?? null);
+      } else if (capabilities.hasSizeClass) {
+        insertFields.push('size_class');
+        insertValues.push(String(description || 'közepes'));
+      }
+
+      const placeholders = insertFields.map(() => '?').join(', ');
+      const [result] = await db.query(
+        `INSERT INTO categories (${insertFields.join(', ')}) VALUES (${placeholders})`,
+        insertValues
+      );
+      const [rows] = await db.query(
+        `SELECT id, name, ${getCategoryDescriptionSelectExpr(capabilities)} FROM categories WHERE id = ?`,
+        [result.insertId]
+      );
       res.json(rows[0]);
     } else {
       res.status(503).json({ message: 'Database not available' });
@@ -1192,8 +1524,20 @@ app.put('/categories/:id', authenticateJWT, requireAdmin, async (req, res) => {
 
   try {
     if (dbConnected) {
-      await db.query('UPDATE categories SET name=?, description=? WHERE id=?', [name, description, id]);
-      const [rows] = await db.query('SELECT * FROM categories WHERE id = ?', [id]);
+      const capabilities = await getCategoriesSchemaCapabilities();
+
+      if (capabilities.hasDescription) {
+        await db.query('UPDATE categories SET name=?, description=? WHERE id=?', [name, description ?? null, id]);
+      } else if (capabilities.hasSizeClass) {
+        await db.query('UPDATE categories SET name=?, size_class=? WHERE id=?', [name, String(description || 'közepes'), id]);
+      } else {
+        await db.query('UPDATE categories SET name=? WHERE id=?', [name, id]);
+      }
+
+      const [rows] = await db.query(
+        `SELECT id, name, ${getCategoryDescriptionSelectExpr(capabilities)} FROM categories WHERE id = ?`,
+        [id]
+      );
       res.json(rows[0]);
     } else {
       res.status(503).json({ message: 'Database not available' });
@@ -1222,7 +1566,10 @@ app.delete('/categories/:id', authenticateJWT, requireAdmin, async (req, res) =>
 app.get('/locations', authenticateJWT, async (req, res) => {
   try {
     if (dbConnected) {
-      const [rows] = await db.query('SELECT * FROM locations');
+      const capabilities = await getLocationsSchemaCapabilities();
+      const [rows] = await db.query(
+        `SELECT id, ${getLocationNameSelectExpr(capabilities)}, ${getLocationDescriptionSelectExpr(capabilities)} FROM locations`
+      );
       res.json(rows);
     } else {
       res.status(503).json({ message: 'Database not available' });
@@ -1242,9 +1589,62 @@ app.post('/locations', authenticateJWT, requireAdmin, async (req, res) => {
 
   try {
     if (dbConnected) {
-      const [result] = await db.query('INSERT INTO locations (name, description) VALUES (?, ?)', [name, description]);
-      const [rows] = await db.query('SELECT * FROM locations WHERE id = ?', [result.insertId]);
-      res.json(rows[0]);
+      const capabilities = await getLocationsSchemaCapabilities();
+
+      if (capabilities.hasName) {
+        const [result] = await db.query('INSERT INTO locations (name, description) VALUES (?, ?)', [name, description ?? null]);
+        const [rows] = await db.query(
+          `SELECT id, ${getLocationNameSelectExpr(capabilities)}, ${getLocationDescriptionSelectExpr(capabilities)} FROM locations WHERE id = ?`,
+          [result.insertId]
+        );
+        return res.json(rows[0]);
+      }
+
+      if (capabilities.hasLocationCode) {
+        const normalizedCode = String(name).trim();
+        const rowNum = Number.parseInt(String(req.body?.row_num ?? 1), 10) || 1;
+        const colNum = Number.parseInt(String(req.body?.col_num ?? 1), 10) || 1;
+        const shelfLevel = Number.parseInt(String(req.body?.shelf_level ?? 0), 10) || 0;
+        const isXl = req.body?.is_xl ? 1 : 0;
+        const isActive = req.body?.is_active === undefined ? 1 : (req.body.is_active ? 1 : 0);
+
+        const insertFields = ['location_code'];
+        const insertValues = [normalizedCode];
+
+        if (capabilities.hasRowNum) {
+          insertFields.push('row_num');
+          insertValues.push(rowNum);
+        }
+        if (capabilities.hasColNum) {
+          insertFields.push('col_num');
+          insertValues.push(colNum);
+        }
+        if (capabilities.hasShelfLevel) {
+          insertFields.push('shelf_level');
+          insertValues.push(shelfLevel);
+        }
+        if (capabilities.hasIsXl) {
+          insertFields.push('is_xl');
+          insertValues.push(isXl);
+        }
+        if (capabilities.hasIsActive) {
+          insertFields.push('is_active');
+          insertValues.push(isActive);
+        }
+
+        const placeholders = insertFields.map(() => '?').join(', ');
+        const [result] = await db.query(
+          `INSERT INTO locations (${insertFields.join(', ')}) VALUES (${placeholders})`,
+          insertValues
+        );
+        const [rows] = await db.query(
+          `SELECT id, ${getLocationNameSelectExpr(capabilities)}, ${getLocationDescriptionSelectExpr(capabilities)} FROM locations WHERE id = ?`,
+          [result.insertId]
+        );
+        return res.json(rows[0]);
+      }
+
+      return res.status(400).json({ message: 'Current schema does not support location creation' });
     } else {
       res.status(503).json({ message: 'Database not available' });
     }
@@ -1264,8 +1664,20 @@ app.put('/locations/:id', authenticateJWT, requireAdmin, async (req, res) => {
 
   try {
     if (dbConnected) {
-      await db.query('UPDATE locations SET name=?, description=? WHERE id=?', [name, description, id]);
-      const [rows] = await db.query('SELECT * FROM locations WHERE id = ?', [id]);
+      const capabilities = await getLocationsSchemaCapabilities();
+
+      if (capabilities.hasName) {
+        await db.query('UPDATE locations SET name=?, description=? WHERE id=?', [name, description ?? null, id]);
+      } else if (capabilities.hasLocationCode) {
+        await db.query('UPDATE locations SET location_code=? WHERE id=?', [String(name).trim(), id]);
+      } else {
+        return res.status(400).json({ message: 'Current schema does not support location updates' });
+      }
+
+      const [rows] = await db.query(
+        `SELECT id, ${getLocationNameSelectExpr(capabilities)}, ${getLocationDescriptionSelectExpr(capabilities)} FROM locations WHERE id = ?`,
+        [id]
+      );
       res.json(rows[0]);
     } else {
       res.status(503).json({ message: 'Database not available' });
