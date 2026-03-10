@@ -184,7 +184,7 @@ function DemoPageContent({ pathname, userRole }: { pathname: string; userRole: s
     case '/quick-actions/quick-action-item-list':
       return (<QuickActionsPageList />);
     case '/picking':
-      return (<PickingPage />);
+      return (<PickingPage userRole={userRole} />);
     case '/debug':
       return (<DebugPage />);
     default:
