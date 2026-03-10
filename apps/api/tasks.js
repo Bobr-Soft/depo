@@ -45,7 +45,10 @@ async function getTasksForUser(userEmail) {
     LEFT JOIN categories c ON i.category_id = c.id
     LEFT JOIN locations l ON i.location_id = l.id
     LEFT JOIN users u ON u.id = t.assigned_user
-    WHERE t.assigned_user = (SELECT id FROM users WHERE LOWER(email) = LOWER(?))
+    WHERE (
+      LOWER(u.email) = LOWER(?)
+      OR t.assigned_user IS NULL
+    )
     ORDER BY t.id, ti.id
   `;
 

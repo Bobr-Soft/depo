@@ -8,6 +8,20 @@ import { logout, reauthenticateSilently } from './auth';
 
 let isSyncing = false;
 
+class ApiSyncError extends Error {
+  statusCode: number;
+
+  constructor(statusCode: number, message: string) {
+    super(message);
+    this.name = 'ApiSyncError';
+    this.statusCode = statusCode;
+  }
+}
+
+function isNonRetryableStatus(statusCode: number): boolean {
+  return statusCode >= 400 && statusCode < 500;
+}
+
 type InboundItemUpsertPayload = {
   barcode: string;
   quantityIncrement: number;
@@ -190,7 +204,10 @@ async function upsertInboundItem(
 
   if (!listResponse.ok) {
     const errorText = await listResponse.text().catch(() => 'Unknown error');
-    throw new Error(`Failed to fetch items for inbound sync: ${listResponse.status} - ${errorText}`);
+    throw new ApiSyncError(
+      listResponse.status,
+      `Failed to fetch items for inbound sync: ${listResponse.status} - ${errorText}`
+    );
   }
 
   const existingItems = await listResponse.json();
@@ -218,7 +235,10 @@ async function upsertInboundItem(
 
     if (!updateResponse.ok) {
       const errorText = await updateResponse.text().catch(() => 'Unknown error');
-      throw new Error(`Failed to update item ${existingItem.id}: ${updateResponse.status} - ${errorText}`);
+      throw new ApiSyncError(
+        updateResponse.status,
+        `Failed to update item ${existingItem.id}: ${updateResponse.status} - ${errorText}`
+      );
     }
 
     return;
@@ -242,7 +262,10 @@ async function upsertInboundItem(
 
   if (!createResponse.ok) {
     const errorText = await createResponse.text().catch(() => 'Unknown error');
-    throw new Error(`Failed to create item for barcode ${barcode}: ${createResponse.status} - ${errorText}`);
+    throw new ApiSyncError(
+      createResponse.status,
+      `Failed to create item for barcode ${barcode}: ${createResponse.status} - ${errorText}`
+    );
   }
 }
 
@@ -297,15 +320,23 @@ async function pushSyncQueue(token: string, apiUrl: string): Promise<void> {
             const errorText = await response.text().catch(() => 'Unknown error');
             if (response.status === 401 || response.status === 403) {
               console.error(`Auth error: ${response.status} - ${errorText}`);
-              throw new Error('Unauthorized');
+              throw new ApiSyncError(response.status, 'Unauthorized');
             }
-            throw new Error(`API error: ${response.status} - ${errorText}`);
+            throw new ApiSyncError(response.status, `API error: ${response.status} - ${errorText}`);
           }
 
           console.log(`✅ Synced task_item ${taskItemId} to server`);
           await db.removeSyncOperation(operation.id);
         } catch (apiError) {
           clearTimeout(timeoutId);
+          if (apiError instanceof ApiSyncError && isNonRetryableStatus(apiError.statusCode)) {
+            console.warn(
+              `Skipping non-retryable task_item operation ${operation.id}: ${apiError.message}`
+            );
+            await db.removeSyncOperation(operation.id);
+            continue;
+          }
+
           console.warn(
             `⚠️  Failed to push operation ${operation.id} (attempt ${operation.retry_count + 1}):`,
             apiError instanceof Error ? apiError.message : 'Unknown error'
@@ -318,6 +349,14 @@ async function pushSyncQueue(token: string, apiUrl: string): Promise<void> {
           console.log(`✅ Synced inbound item operation ${operation.id}`);
           await db.removeSyncOperation(operation.id);
         } catch (apiError) {
+          if (apiError instanceof ApiSyncError && isNonRetryableStatus(apiError.statusCode)) {
+            console.warn(
+              `Skipping non-retryable inbound operation ${operation.id}: ${apiError.message}`
+            );
+            await db.removeSyncOperation(operation.id);
+            continue;
+          }
+
           console.warn(
             `⚠️  Failed to sync inbound item operation ${operation.id} (attempt ${operation.retry_count + 1}):`,
             apiError instanceof Error ? apiError.message : 'Unknown error'
