@@ -17,6 +17,16 @@ export type StorageKey = (typeof STORAGE_KEYS)[keyof typeof STORAGE_KEYS];
 const DEFAULT_API_URL =
   process.env.EXPO_PUBLIC_API_URL ?? 'https://depo-tj5n.onrender.com';
 
+function normalizeApiBaseUrl(url: string): string {
+  return url.trim().replace(/\/+$/, '');
+}
+
+export function buildApiUrl(baseUrl: string, path: string): string {
+  const normalizedBase = normalizeApiBaseUrl(baseUrl);
+  const normalizedPath = `/${String(path || '').replace(/^\/+/, '')}`;
+  return `${normalizedBase}${normalizedPath}`;
+}
+
 // ─── Token ──────────────────────────────────────────────────────────────────
 
 export async function getToken(): Promise<string | null> {
@@ -39,11 +49,11 @@ export async function deleteToken(): Promise<void> {
  */
 export async function getApiUrl(): Promise<string> {
   const stored = await SecureStore.getItemAsync(STORAGE_KEYS.API_URL);
-  return stored ?? DEFAULT_API_URL;
+  return normalizeApiBaseUrl(stored ?? DEFAULT_API_URL);
 }
 
 export async function setApiUrl(url: string): Promise<void> {
-  return SecureStore.setItemAsync(STORAGE_KEYS.API_URL, url);
+  return SecureStore.setItemAsync(STORAGE_KEYS.API_URL, normalizeApiBaseUrl(url));
 }
 
 // ─── User email ──────────────────────────────────────────────────────────────

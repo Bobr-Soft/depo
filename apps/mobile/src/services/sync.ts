@@ -1,6 +1,6 @@
 import * as Network from 'expo-network';
 import { TaskComplete } from '@/constants/types';
-import { getApiUrl, getToken } from './secureStorage';
+import { buildApiUrl, getApiUrl, getToken } from './secureStorage';
 import { API_TIMEOUT, RETRY_CONFIG } from '@/constants/config';
 import * as db from './database';
 import { markItemAsPicked } from './database';
@@ -85,7 +85,7 @@ async function fetchTasksFromApi(): Promise<TaskComplete[]> {
     }
   }
 
-  console.log(`Fetching tasks from: ${apiUrl}/tasks`);
+  console.log(`Fetching tasks from: ${buildApiUrl(apiUrl, '/tasks')}`);
 
   let lastError: Error | null = null;
 
@@ -93,11 +93,11 @@ async function fetchTasksFromApi(): Promise<TaskComplete[]> {
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => {
-        console.error(`Request timeout after ${API_TIMEOUT}ms to ${apiUrl}/tasks (attempt ${attempt}/${RETRY_CONFIG.maxAttempts})`);
+        console.error(`Request timeout after ${API_TIMEOUT}ms to ${buildApiUrl(apiUrl, '/tasks')} (attempt ${attempt}/${RETRY_CONFIG.maxAttempts})`);
         controller.abort();
       }, API_TIMEOUT);
 
-      const response = await fetch(`${apiUrl}/tasks`, {
+      const response = await fetch(buildApiUrl(apiUrl, '/tasks'), {
         signal: controller.signal,
         headers: {
           Authorization: `Bearer ${token}`,
@@ -181,7 +181,7 @@ async function upsertInboundItem(
 
   const quantityIncrement = Math.max(1, Math.floor(payload.quantityIncrement || 1));
 
-  const listResponse = await fetch(`${apiUrl}/items`, {
+  const listResponse = await fetch(buildApiUrl(apiUrl, '/items'), {
     headers: {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
@@ -200,7 +200,7 @@ async function upsertInboundItem(
 
   if (existingItem) {
     const updatedQuantity = Math.max(0, Number(existingItem.quantity || 0)) + quantityIncrement;
-    const updateResponse = await fetch(`${apiUrl}/items/${existingItem.id}`, {
+    const updateResponse = await fetch(buildApiUrl(apiUrl, `/items/${existingItem.id}`), {
       method: 'PUT',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -224,7 +224,7 @@ async function upsertInboundItem(
     return;
   }
 
-  const createResponse = await fetch(`${apiUrl}/items`, {
+  const createResponse = await fetch(buildApiUrl(apiUrl, '/items'), {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -279,7 +279,7 @@ async function pushSyncQueue(token: string, apiUrl: string): Promise<void> {
 
         try {
           const response = await fetch(
-            `${apiUrl}/tasks/${task_id}/items/${item_id}/picked`,
+            buildApiUrl(apiUrl, `/tasks/${task_id}/items/${item_id}/picked`),
             {
               method: 'PUT',
               signal: controller.signal,

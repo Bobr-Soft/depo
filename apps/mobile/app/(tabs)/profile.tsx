@@ -7,6 +7,7 @@ import * as Haptics from 'expo-haptics';
 import loadTasks from '@/components/api';
 import { TaskComplete } from '@/constants/types';
 import {
+  buildApiUrl,
   getApiUrl,
   getToken,
   getUserEmail,
@@ -110,7 +111,7 @@ export default function ProfileScreen() {
       const timeoutId = setTimeout(() => controller.abort(), 10000);
 
       try {
-        const response = await fetch(`${currentApiUrl}/me`, {
+        const response = await fetch(buildApiUrl(currentApiUrl, '/me'), {
           method: 'GET',
           headers: {
             Authorization: `Bearer ${token}`,
