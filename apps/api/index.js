@@ -1708,7 +1708,8 @@ app.get('/tasks', authenticateJWT, async (req, res) => {
   try {
     if (dbConnected) {
       const userEmail = req.user.email;
-      const tasks = await getTasksForUser(userEmail);
+      const userId = resolveAuthenticatedUserId(req);
+      const tasks = await getTasksForUser(userEmail, userId);
       res.json(tasks);
     } else {
       res.status(503).json({ message: 'Database not available' });

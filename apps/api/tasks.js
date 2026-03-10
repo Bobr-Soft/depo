@@ -1,6 +1,9 @@
 const db = require('./db');
 
-async function getTasksForUser(userEmail) {
+async function getTasksForUser(userEmail, userId = null) {
+  const normalizedEmail = typeof userEmail === 'string' ? userEmail.trim() : '';
+  const resolvedUserId = Number.isInteger(Number(userId)) ? Number(userId) : null;
+
   const query = `
     SELECT
       t.id AS task_id,
@@ -40,19 +43,20 @@ async function getTasksForUser(userEmail) {
       l.location_code AS location_code,
       l.is_active AS location_is_active
     FROM tasks t
-    JOIN task_items ti ON ti.task_id = t.id
-    JOIN items i ON ti.item_id = i.id
+    LEFT JOIN task_items ti ON ti.task_id = t.id
+    LEFT JOIN items i ON ti.item_id = i.id
     LEFT JOIN categories c ON i.category_id = c.id
     LEFT JOIN locations l ON i.location_id = l.id
     LEFT JOIN users u ON u.id = t.assigned_user
     WHERE (
-      LOWER(u.email) = LOWER(?)
+      (? IS NOT NULL AND t.assigned_user = ?)
+      OR LOWER(u.email) = LOWER(?)
       OR t.assigned_user IS NULL
     )
     ORDER BY t.id, ti.id
   `;
 
-  const [rows] = await db.query(query, [userEmail]);
+  const [rows] = await db.query(query, [resolvedUserId, resolvedUserId, normalizedEmail]);
 
   // Group rows into TaskComplete structure
   const tasksMap = new Map();
