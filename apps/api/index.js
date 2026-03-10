@@ -54,6 +54,19 @@ function isValidString(str, maxLength = 255) {
   return typeof str === 'string' && str.trim().length > 0 && str.length <= maxLength;
 }
 
+function normalizeId(value) {
+  if (typeof value === 'bigint') {
+    return value.toString();
+  }
+  return value;
+}
+
+function safeStringify(value) {
+  return JSON.stringify(value, (_, nestedValue) =>
+    typeof nestedValue === 'bigint' ? nestedValue.toString() : nestedValue
+  );
+}
+
 const itemsSchemaCache = {
   value: null,
 };
@@ -248,7 +261,7 @@ app.post('/login', async (req, res) => {
       // Debug: log raw role from database
       console.log('🔍 Raw role from DB:', rows[0].role, 'Type:', typeof rows[0].role);
       console.log('🔍 Is Buffer?', Buffer.isBuffer(rows[0].role));
-      console.log('🔍 Full user row:', JSON.stringify(rows[0]));
+      console.log('🔍 Full user row:', safeStringify(rows[0]));
       console.log('🔍 All keys:', Object.keys(rows[0]));
 
       // Handle both string and Buffer (MySQL enum can sometimes be returned as Buffer)
@@ -266,11 +279,12 @@ app.post('/login', async (req, res) => {
       console.log('✅ Raw role (lowercase):', rawRole);
       console.log('✅ Capitalized role:', role);
 
-      const responseData = { token: '', user: { email, id: rows[0].id, role } };
-      const token = jwt.sign({ email, userId: rows[0].id, role }, JWT_SECRET, { expiresIn: '1h' });
+      const userId = normalizeId(rows[0].id);
+      const responseData = { token: '', user: { email, id: userId, role } };
+      const token = jwt.sign({ email, userId, role }, JWT_SECRET, { expiresIn: '1h' });
       responseData.token = token;
 
-      console.log('📤 Sending response:', JSON.stringify(responseData));
+      console.log('📤 Sending response:', safeStringify(responseData));
       res.json(responseData);
     } else {
       return res.status(503).json({ message: 'Database not available' });
