@@ -17,14 +17,18 @@ import ConstructionIcon from '@mui/icons-material/Construction';
 import SupervisorAccountIcon from '@mui/icons-material/SupervisorAccount';
 import OverviewPage from './OverviewPage';
 import ManageLocationsPage from './ManageLocationsPage';
-import CategoriesPage from './ManageCategoriesPage'; 
+import CategoriesPage from './ManageCategoriesPage';
 import ManageUsersPage from './ManageUsersPage';
 import ManageItemsPage from './ManageItemsPage';
 import AddIcon from '@mui/icons-material/Add';
+import BugReportIcon from '@mui/icons-material/BugReport';
+import ChecklistIcon from '@mui/icons-material/Checklist';
 import QuickActionsPageList from './QuickActionsPageList';
 import QuickActionsPageAdd from './QuickActionsPageAdd';
 import RentingItemsPage from './RentingItemsPage';
 import ManageRentingItemsPage from './ManageRentingItemsPage';
+import DebugPage from './DebugPage';
+import PickingPage from './PickingPage';
 const NAVIGATION: Navigation = [
   {
     segment: 'overview',
@@ -76,6 +80,16 @@ const NAVIGATION: Navigation = [
     segment: 'manage-users',
     title: 'Felhasználók kezelése',
     icon: <SupervisorAccountIcon />,
+  },
+  {
+    segment: 'picking',
+    title: 'Picking',
+    icon: <ChecklistIcon />,
+  },
+  {
+    segment: 'debug',
+    title: 'Debug',
+    icon: <BugReportIcon />,
   }
 ];
 
@@ -83,7 +97,7 @@ const NAVIGATION: Navigation = [
 const demoTheme = createTheme({
   cssVariables: {
     colorSchemeSelector: 'data-toolpad-color-scheme',
-    
+
   },
   colorSchemes: {
     light: {
@@ -100,7 +114,7 @@ const demoTheme = createTheme({
     dark: {
       palette: {
         background: {
-          default: '#0d1117', 
+          default: '#0d1117',
           paper: '#161b22',
         },
         text: {
@@ -114,7 +128,7 @@ const demoTheme = createTheme({
 function DemoPageContent({ pathname, userRole }: { pathname: string; userRole: string }) {
   const isAdmin = userRole.toLowerCase() === 'admin';
   console.log('🚪 Route guard check - Path:', pathname, 'Role:', userRole, 'Is Admin:', isAdmin);
-  
+
   // Route guard based on role
   if (isAdmin) {
     // Admin cannot access renting page
@@ -132,7 +146,7 @@ function DemoPageContent({ pathname, userRole }: { pathname: string; userRole: s
     }
   } else {
     // Teacher can only access overview, renting and dashboard
-    const allowedPaths = ['/overview', '/renting', '/dashboard'];
+    const allowedPaths = ['/overview', '/renting', '/dashboard', '/picking'];
     if (!allowedPaths.includes(pathname)) {
       return (
         <Box sx={{ p: 3, textAlign: 'center' }}>
@@ -169,6 +183,10 @@ function DemoPageContent({ pathname, userRole }: { pathname: string; userRole: s
       return (<QuickActionsPageAdd />);
     case '/quick-actions/quick-action-item-list':
       return (<QuickActionsPageList />);
+    case '/picking':
+      return (<PickingPage userRole={userRole} />);
+    case '/debug':
+      return (<DebugPage />);
     default:
       return <div>Page not found.</div>;
   }
@@ -187,7 +205,7 @@ interface DashboardProps {
 function MyAppTitle() {
     return (
     <Stack direction="row" alignItems="center" spacing={2}>
-      <Typography variant="h6">Leltár App</Typography>  
+      <Typography variant="h6">Leltár App</Typography>
     </Stack>
   );
 }
@@ -215,14 +233,14 @@ export default function Dashboard({ onLogout, user }: DashboardProps) {
     if (isAdmin) {
       // Admins see everything EXCEPT renting
       console.log('✅ Admin detected - showing all navigation except Renting');
-      return NAVIGATION.filter(item => 
+      return NAVIGATION.filter(item =>
         !('segment' in item) || item.segment !== 'renting'
       );
     } else {
-      // Teachers see Overview and Renting
-      console.log('👨‍🏫 Teacher detected - showing Overview and Renting');
-      return NAVIGATION.filter(item => 
-        'segment' in item && (item.segment === 'overview' || item.segment === 'renting')
+      // Teachers see Overview, Renting and Picking
+      console.log('👨‍🏫 Teacher detected - showing Overview, Renting and Picking');
+      return NAVIGATION.filter(item =>
+        'segment' in item && (item.segment === 'overview' || item.segment === 'renting' || item.segment === 'picking')
       );
     }
   }, [userRole]);
@@ -250,7 +268,7 @@ export default function Dashboard({ onLogout, user }: DashboardProps) {
         }}
       >
         <DemoPageContent pathname={router.pathname} userRole={userRole} />
-      </DashboardLayout>  
+      </DashboardLayout>
     </AppProvider>
   );
 }

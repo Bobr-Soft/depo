@@ -82,8 +82,8 @@ export default function PickingScreen() {
             >
               <RefreshCw size={18} color="$color11" />
             </Button>
-            <Button size="$4" theme="blue" pressStyle={{ scale: 0.95 }} onPress={() => router.push('/picking/new')}>
-              <Text fontWeight="600">+ Új feladat</Text>
+            <Button size="$4" theme="blue" pressStyle={{ scale: 0.95 }} onPress={() => router.push('/items')}>
+              <Text fontWeight="600">Feladatok</Text>
             </Button>
           </XStack>
         </XStack>
@@ -99,6 +99,7 @@ export default function PickingScreen() {
             </YStack>
           ) : tasks.length > 0 ? (
             tasks.map((task) => (
+              task.status == "in_progress" ?
               <Card key={task.id} backgroundColor="$background" marginBottom="$2" onPress={() => router.push({ pathname: "/picking/[id]", params: { id: task.id } })}>
                 <XStack gap="$3" alignItems="center">
                   <YStack flex={1} gap="$1" backgroundColor="$color5" padding="$4" borderRadius="$4">
@@ -120,6 +121,7 @@ export default function PickingScreen() {
                   </YStack>
                 </XStack>
               </Card>
+              : null
             ))
           ) : (
             <YStack flex={1} gap="$3" justifyContent="center" alignItems="center">
@@ -127,7 +129,7 @@ export default function PickingScreen() {
                 Nincsenek aktív feladatok
               </Text>
               <Text fontSize={12} color="$color9" textAlign="center">
-                Új feladat létrehozásához nyomja meg az &ldquo;Új feladat&rdquo; gombot
+                Új feladat felvételéhez nyomja meg az &ldquo;Feladatok&rdquo; gombot
               </Text>
             </YStack>
           )}
