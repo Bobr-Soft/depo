@@ -11,7 +11,7 @@ import { YStack, XStack, Button, Text, H2, Card, ScrollView } from "@repo/ui";
 import { ScanBarcode, Package } from "@tamagui/lucide-icons";
 import { BarcodeScanner } from "@/components";
 import { router, useLocalSearchParams } from "expo-router";
-import { getApiUrl, getToken } from "@/services/secureStorage";
+import { buildApiUrl, getApiUrl, getToken } from "@/services/secureStorage";
 import { isOnline, syncData } from "@/services/sync";
 import {
   enqueueSyncOperation,
@@ -202,7 +202,7 @@ export default function InboundScreen() {
   }, []);
 
   const fetchItems = useCallback(async (apiUrl: string, token: string): Promise<ApiItem[]> => {
-    const response = await fetch(`${apiUrl}/items`, {
+    const response = await fetch(buildApiUrl(apiUrl, '/items'), {
       headers: {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
@@ -284,7 +284,7 @@ export default function InboundScreen() {
 
         try {
           if (existingItem) {
-            const updateResponse = await fetch(`${apiUrl}/items/${existingItem.id}`, {
+            const updateResponse = await fetch(buildApiUrl(apiUrl, `/items/${existingItem.id}`), {
               method: "PUT",
               headers: {
                 Authorization: `Bearer ${token}`,
@@ -308,7 +308,7 @@ export default function InboundScreen() {
             const updated = await updateResponse.json();
             itemByBarcode.set(normalizedBarcode, updated);
           } else {
-            const createResponse = await fetch(`${apiUrl}/items`, {
+            const createResponse = await fetch(buildApiUrl(apiUrl, '/items'), {
               method: "POST",
               headers: {
                 Authorization: `Bearer ${token}`,

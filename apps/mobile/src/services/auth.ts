@@ -1,4 +1,5 @@
 import {
+  buildApiUrl,
   getApiUrl,
   setToken,
   setUserEmail,
@@ -65,7 +66,7 @@ export async function login(email: string): Promise<LoginResult> {
         controller.abort();
       }, API_TIMEOUT);
 
-      const response = await fetch(`${apiUrl}/login`, {
+      const response = await fetch(buildApiUrl(apiUrl, '/login'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email }),

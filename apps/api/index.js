@@ -67,6 +67,37 @@ function safeStringify(value) {
   );
 }
 
+function normalizeRole(value) {
+  if (value === null || value === undefined) {
+    return 'Teacher';
+  }
+
+  const raw = Buffer.isBuffer(value)
+    ? value.toString('utf8')
+    : String(value);
+
+  const normalized = raw.trim().toLowerCase();
+  if (!normalized) {
+    return 'Teacher';
+  }
+
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+}
+
+function buildUserResponse(user) {
+  const emailValue = String(user?.email || '');
+  const localPart = emailValue.split('@')[0] || '';
+  const nameParts = localPart.split('.').filter(Boolean);
+  const firstName = nameParts.length > 1 ? nameParts[1] : (nameParts[0] || 'User');
+
+  return {
+    ...user,
+    id: normalizeId(user?.id),
+    username: firstName.charAt(0).toUpperCase() + firstName.slice(1).toLowerCase(),
+    role: normalizeRole(user?.role),
+  };
+}
+
 const itemsSchemaCache = {
   value: null,
 };
@@ -1031,19 +1062,7 @@ app.get('/users', authenticateJWT, async (req, res) => {
   try {
     if (dbConnected) {
       const [rows] = await db.query('SELECT id, email, role, isActive FROM users');
-      // Add username from email and normalize role for compatibility
-      const usersWithUsername = rows.map(user => {
-        const localPart = user.email.split('@')[0];
-        const nameParts = localPart.split('.');
-        // Use second part (given name) if available, fallback to first part
-        const firstName = nameParts.length > 1 ? nameParts[1] : nameParts[0];
-        return {
-          ...user,
-          username: firstName.charAt(0).toUpperCase() + firstName.slice(1).toLowerCase(),
-          // Capitalize role: 'admin' -> 'Admin', 'teacher' -> 'Teacher'
-          role: user.role ? user.role.charAt(0).toUpperCase() + user.role.slice(1).toLowerCase() : 'Teacher'
-        };
-      });
+      const usersWithUsername = rows.map((user) => buildUserResponse(user));
       res.json(usersWithUsername);
     } else {
       res.status(503).json({ message: 'Database not available' });
@@ -1063,25 +1082,14 @@ app.post('/users', authenticateJWT, requireAdmin, async (req, res) => {
 
   try {
     if (dbConnected) {
-      // Normalize role: 'Admin' -> 'admin', 'Teacher' -> 'teacher' for database
       const normalizedRole = role ? role.toLowerCase() : 'teacher';
-      // Convert boolean to integer for MySQL (1 or 0)
       const normalizedIsActive = isActive !== undefined ? (isActive ? 1 : 0) : 1;
       const [result] = await db.query(
         'INSERT INTO users (email, password, role, isActive) VALUES (?, ?, ?, ?)',
         [email, password, normalizedRole, normalizedIsActive]
       );
       const [rows] = await db.query('SELECT id, email, role, isActive FROM users WHERE id = ?', [result.insertId]);
-      const localPart = rows[0].email.split('@')[0];
-      const nameParts = localPart.split('.');
-      // Use second part (given name) if available, fallback to first part
-      const firstName = nameParts.length > 1 ? nameParts[1] : nameParts[0];
-      const userWithUsername = {
-        ...rows[0],
-        username: firstName.charAt(0).toUpperCase() + firstName.slice(1).toLowerCase(),
-        // Capitalize role for frontend
-        role: rows[0].role ? rows[0].role.charAt(0).toUpperCase() + rows[0].role.slice(1).toLowerCase() : 'Teacher'
-      };
+      const userWithUsername = buildUserResponse(rows[0]);
       res.json(userWithUsername);
     } else {
       res.status(503).json({ message: 'Database not available' });
@@ -1103,9 +1111,7 @@ app.put('/users/:id', authenticateJWT, requireAdmin, async (req, res) => {
   console.log('📝 Updating user:', { id, email, role, isActive, type: typeof isActive });
   try {
     if (dbConnected) {
-      // Normalize role: 'Admin' -> 'admin', 'Teacher' -> 'teacher' for database
       const normalizedRole = role ? role.toLowerCase() : 'teacher';
-      // Convert boolean to integer for MySQL (1 or 0)
       const normalizedIsActive = isActive !== undefined ? (isActive ? 1 : 0) : 1;
       console.log('📝 Normalized values:', { normalizedRole, normalizedIsActive });
       const [result] = await db.query(
@@ -1114,16 +1120,7 @@ app.put('/users/:id', authenticateJWT, requireAdmin, async (req, res) => {
       );
       console.log('📝 Update result:', result);
       const [rows] = await db.query('SELECT id, email, role, isActive FROM users WHERE id = ?', [id]);
-      const localPart = rows[0].email.split('@')[0];
-      const nameParts = localPart.split('.');
-      // Use second part (given name) if available, fallback to first part
-      const firstName = nameParts.length > 1 ? nameParts[1] : nameParts[0];
-      const userWithUsername = {
-        ...rows[0],
-        username: firstName.charAt(0).toUpperCase() + firstName.slice(1).toLowerCase(),
-        // Capitalize role for frontend
-        role: rows[0].role ? rows[0].role.charAt(0).toUpperCase() + rows[0].role.slice(1).toLowerCase() : 'Teacher'
-      };
+      const userWithUsername = buildUserResponse(rows[0]);
       res.json(userWithUsername);
     } else {
       res.status(503).json({ message: 'Database not available' });
