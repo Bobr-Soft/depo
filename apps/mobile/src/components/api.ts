@@ -1,6 +1,7 @@
 import { TaskComplete } from '@/constants';
-import { getToken } from '@/services/secureStorage';
+import { buildApiUrl, getApiUrl, getToken } from '@/services/secureStorage';
 import { getTasksWithSync, forceRefresh, taskItemPicked } from '@/services/sync';
+import { logout, reauthenticateSilently } from '@/services/auth';
 
 const DEV_BYPASS_TOKEN = 'dev-bypass-token';
 
@@ -113,4 +114,72 @@ export async function markTaskItemAsPicked(taskId: number, itemId: number, picke
     console.error('Failed to mark task item as picked:', error);
     return false;
   }
+}
+
+async function mutateTaskAssignment(taskId: number, action: 'take' | 'release'): Promise<boolean> {
+  try {
+    const [storedToken, apiUrl] = await Promise.all([getToken(), getApiUrl()]);
+    let token = storedToken;
+    let retriedWithReauth = false;
+
+    if (!token || !apiUrl) {
+      console.warn(`${action}Task: missing auth token or API URL`);
+      return false;
+    }
+
+    if (token === DEV_BYPASS_TOKEN) {
+      console.warn(`${action}Task: dev bypass - simulating success`);
+      return true;
+    }
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const response = await fetch(buildApiUrl(apiUrl, `/tasks/${taskId}/${action}`), {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (response.ok) {
+        return true;
+      }
+
+      const errorText = await response.text().catch(() => 'Unknown error');
+
+      if ((response.status === 401 || response.status === 403) && !retriedWithReauth) {
+        const reauthResult = await reauthenticateSilently();
+        if (!reauthResult.success) {
+          await logout();
+          return false;
+        }
+
+        const refreshedToken = reauthResult.token ?? await getToken();
+        if (!refreshedToken) {
+          await logout();
+          return false;
+        }
+
+        token = refreshedToken;
+        retriedWithReauth = true;
+        continue;
+      }
+
+      console.error(`${action}Task failed:`, response.status, errorText);
+      return false;
+    }
+
+    return false;
+  } catch (error) {
+    console.error(`Failed to ${action} task:`, error);
+    return false;
+  }
+}
+
+export async function takeTask(taskId: number): Promise<boolean> {
+  return mutateTaskAssignment(taskId, 'take');
+}
+
+export async function releaseTask(taskId: number): Promise<boolean> {
+  return mutateTaskAssignment(taskId, 'release');
 }

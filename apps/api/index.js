@@ -1708,7 +1708,8 @@ app.get('/tasks', authenticateJWT, async (req, res) => {
   try {
     if (dbConnected) {
       const userEmail = req.user.email;
-      const tasks = await getTasksForUser(userEmail);
+      const userId = resolveAuthenticatedUserId(req);
+      const tasks = await getTasksForUser(userEmail, userId);
       res.json(tasks);
     } else {
       res.status(503).json({ message: 'Database not available' });
@@ -1716,6 +1717,153 @@ app.get('/tasks', authenticateJWT, async (req, res) => {
   } catch (err) {
     console.error('❌ Error fetching tasks:', err.message);
     res.status(500).json({ message: 'Database error' });
+  }
+});
+
+function resolveAuthenticatedUserId(req) {
+  if (req?.user?.dbUser?.id !== undefined && req.user.dbUser.id !== null) {
+    const parsed = Number.parseInt(String(req.user.dbUser.id), 10);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+  }
+
+  if (req?.user?.userId !== undefined && req.user.userId !== null) {
+    const parsed = Number.parseInt(String(req.user.userId), 10);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+  }
+
+  return null;
+}
+
+app.post('/tasks/:taskId/take', authenticateJWT, async (req, res) => {
+  const parsedTaskId = Number.parseInt(req.params.taskId, 10);
+  if (!Number.isInteger(parsedTaskId) || parsedTaskId <= 0) {
+    return res.status(400).json({ message: 'Invalid taskId' });
+  }
+
+  if (!dbConnected) {
+    return res.status(503).json({ message: 'Database not available' });
+  }
+
+  const userId = resolveAuthenticatedUserId(req);
+  if (!userId) {
+    return res.status(401).json({ message: 'Unable to resolve authenticated user id' });
+  }
+
+  const connection = await db.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const [taskRows] = await connection.query(
+      `SELECT id, assigned_user, status
+       FROM tasks
+       WHERE id = ?
+       LIMIT 1
+       FOR UPDATE`,
+      [parsedTaskId]
+    );
+
+    if (!taskRows.length) {
+      await connection.rollback();
+      return res.status(404).json({ message: 'Task not found' });
+    }
+
+    const task = taskRows[0];
+    const currentStatus = String(task.status || '').toLowerCase();
+    if (currentStatus === 'completed' || currentStatus === 'cancelled') {
+      await connection.rollback();
+      return res.status(409).json({ message: 'Completed or cancelled tasks cannot be taken' });
+    }
+
+    if (task.assigned_user !== null && Number(task.assigned_user) !== userId) {
+      await connection.rollback();
+      return res.status(409).json({ message: 'Task is already assigned to another user' });
+    }
+
+    await connection.query(
+      `UPDATE tasks
+       SET assigned_user = ?, updated_at = NOW()
+       WHERE id = ?`,
+      [userId, parsedTaskId]
+    );
+
+    await connection.commit();
+    return res.json({ message: 'Task assigned successfully', taskId: parsedTaskId, assigned_user: userId });
+  } catch (err) {
+    await connection.rollback();
+    console.error('❌ Error taking task:', err.message);
+    return res.status(500).json({ message: 'Database error' });
+  } finally {
+    connection.release();
+  }
+});
+
+app.post('/tasks/:taskId/release', authenticateJWT, async (req, res) => {
+  const parsedTaskId = Number.parseInt(req.params.taskId, 10);
+  if (!Number.isInteger(parsedTaskId) || parsedTaskId <= 0) {
+    return res.status(400).json({ message: 'Invalid taskId' });
+  }
+
+  if (!dbConnected) {
+    return res.status(503).json({ message: 'Database not available' });
+  }
+
+  const userId = resolveAuthenticatedUserId(req);
+  if (!userId) {
+    return res.status(401).json({ message: 'Unable to resolve authenticated user id' });
+  }
+
+  const connection = await db.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const [taskRows] = await connection.query(
+      `SELECT id, assigned_user, status
+       FROM tasks
+       WHERE id = ?
+       LIMIT 1
+       FOR UPDATE`,
+      [parsedTaskId]
+    );
+
+    if (!taskRows.length) {
+      await connection.rollback();
+      return res.status(404).json({ message: 'Task not found' });
+    }
+
+    const task = taskRows[0];
+    const currentStatus = String(task.status || '').toLowerCase();
+    if (currentStatus === 'completed' || currentStatus === 'cancelled') {
+      await connection.rollback();
+      return res.status(409).json({ message: 'Completed or cancelled tasks cannot be released' });
+    }
+
+    if (task.assigned_user === null) {
+      await connection.rollback();
+      return res.status(409).json({ message: 'Task is already unassigned' });
+    }
+
+    if (Number(task.assigned_user) !== userId) {
+      await connection.rollback();
+      return res.status(403).json({ message: 'Only the assigned user can release this task' });
+    }
+
+    await connection.query(
+      `UPDATE tasks
+       SET assigned_user = NULL, updated_at = NOW()
+       WHERE id = ?`,
+      [parsedTaskId]
+    );
+
+    await connection.commit();
+    return res.json({ message: 'Task released successfully', taskId: parsedTaskId, assigned_user: null });
+  } catch (err) {
+    await connection.rollback();
+    console.error('❌ Error releasing task:', err.message);
+    return res.status(500).json({ message: 'Database error' });
+  } finally {
+    connection.release();
   }
 });
 
@@ -1767,6 +1915,11 @@ app.put('/tasks/:taskId/items/:itemId/picked', authenticateJWT, async (req, res)
       }
 
       const taskItem = taskItemRows[0];
+      if (!taskItem.assigned_user) {
+        await connection.rollback();
+        return res.status(409).json({ message: 'Task is unassigned. Take the task first.' });
+      }
+
       if (
         taskItem.assigned_email &&
         req.user?.email &&

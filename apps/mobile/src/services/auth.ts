@@ -54,6 +54,7 @@ function sleep(ms: number): Promise<void> {
  */
 export async function login(email: string): Promise<LoginResult> {
   const apiUrl = await getApiUrl();
+  const loginUrl = buildApiUrl(apiUrl, '/login');
   let lastError: Error | null = null;
 
   for (let attempt = 1; attempt <= RETRY_CONFIG.maxAttempts; attempt++) {
@@ -66,7 +67,7 @@ export async function login(email: string): Promise<LoginResult> {
         controller.abort();
       }, API_TIMEOUT);
 
-      const response = await fetch(buildApiUrl(apiUrl, '/login'), {
+      const response = await fetch(loginUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email }),
@@ -104,7 +105,6 @@ export async function login(email: string): Promise<LoginResult> {
         return { success: true, token };
       }
     } catch (err) {
-      clearTimeout(0);
       lastError = err instanceof Error ? err : new Error('Unknown error');
 
       // Check if error is retryable
@@ -126,6 +126,12 @@ export async function login(email: string): Promise<LoginResult> {
       let errorMessage = lastError.message;
       if (lastError.name === 'AbortError') {
         errorMessage = `Connection timeout. Backend is taking too long to respond. Please try again.`;
+      } else if (
+        lastError.message.includes('Network request failed') ||
+        lastError.message.includes('Network') ||
+        lastError.message.includes('ECONNREFUSED')
+      ) {
+        errorMessage = `Cannot reach backend at ${loginUrl}. Check API URL and network access (on iOS, localhost points to the phone/simulator itself).`;
       }
 
       return {
