@@ -3,40 +3,10 @@ import { Alert } from "react-native";
 import { router } from "expo-router";
 import { H2, Text, YStack, XStack, Button, Card, ScrollView, Spinner, Separator } from "@repo/ui";
 import { ArrowLeft, RefreshCw, Layers, Map, AlertTriangle } from "@tamagui/lucide-icons";
+import { adminGetLocations, type WarehouseLocationApi } from "@/components/adminApi";
 
 // --- TÍPUSOK ---
-export type WarehouseLocation = {
-  id: number;
-  row_num: number;
-  col_num: number;
-  shelf_level: number;
-  is_xl: number | boolean; // DB-ben gyakran 1/0
-  location_code: string;
-  is_active: number | boolean;
-};
-
-// --- MOCK ADATOK (Képernyőkép alapján) ---
-// Ezt cseréld le a valós API hívásra (pl. loadLocations())
-const MOCK_LOCATIONS: WarehouseLocation[] = [
-  { id: 1, row_num: 1, col_num: 1, shelf_level: 0, is_xl: 1, location_code: '01-01-00', is_active: 1 },
-  { id: 2, row_num: 1, col_num: 1, shelf_level: 1, is_xl: 0, location_code: '01-01-01', is_active: 1 },
-  { id: 3, row_num: 1, col_num: 1, shelf_level: 2, is_xl: 0, location_code: '01-01-02', is_active: 1 },
-  { id: 4, row_num: 1, col_num: 1, shelf_level: 3, is_xl: 0, location_code: '01-01-03', is_active: 1 },
-  { id: 5, row_num: 1, col_num: 2, shelf_level: 0, is_xl: 1, location_code: '01-02-00', is_active: 1 },
-  { id: 6, row_num: 1, col_num: 2, shelf_level: 1, is_xl: 0, location_code: '01-02-01', is_active: 1 },
-  { id: 7, row_num: 1, col_num: 2, shelf_level: 2, is_xl: 0, location_code: '01-02-02', is_active: 1 },
-  { id: 8, row_num: 2, col_num: 1, shelf_level: 0, is_xl: 1, location_code: '02-01-00', is_active: 1 },
-  { id: 9, row_num: 2, col_num: 2, shelf_level: 0, is_xl: 1, location_code: '02-02-00', is_active: 1 },
-  { id: 10, row_num: 2, col_num: 3, shelf_level: 0, is_xl: 1, location_code: '02-03-00', is_active: 1 },
-  { id: 11, row_num: 3, col_num: 1, shelf_level: 0, is_xl: 1, location_code: '03-01-00', is_active: 1 },
-  { id: 12, row_num: 3, col_num: 1, shelf_level: 1, is_xl: 0, location_code: '03-01-01', is_active: 1 },
-  { id: 13, row_num: 3, col_num: 1, shelf_level: 2, is_xl: 0, location_code: '03-01-02', is_active: 1 },
-  { id: 14, row_num: 3, col_num: 2, shelf_level: 1, is_xl: 0, location_code: '03-02-01', is_active: 1 },
-  { id: 15, row_num: 3, col_num: 2, shelf_level: 2, is_xl: 0, location_code: '03-02-02', is_active: 1 },
-  { id: 16, row_num: 4, col_num: 1, shelf_level: 1, is_xl: 0, location_code: '04-01-01', is_active: 1 },
-  { id: 17, row_num: 4, col_num: 1, shelf_level: 2, is_xl: 0, location_code: '04-01-02', is_active: 1 },
-  { id: 18, row_num: 4, col_num: 2, shelf_level: 1, is_xl: 0, location_code: '04-02-01', is_active: 0 },
-];
+export type WarehouseLocation = WarehouseLocationApi;
 
 export default function WarehouseMapScreen() {
   const [locations, setLocations] = useState<WarehouseLocation[]>([]);
@@ -47,10 +17,7 @@ export default function WarehouseMapScreen() {
     setLoading(true);
     setError(null);
     try {
-      // IDE KERÜL AZ API HÍVÁS: const data = await getLocations();
-      // Teszteléshez a mock adatokat használjuk, pici késleltetéssel:
-      await new Promise(res => setTimeout(res, 600));
-      setLocations(MOCK_LOCATIONS);
+      setLocations(await adminGetLocations());
     } catch {
       setError("Hiba történt a raktártérkép betöltésekor.");
     } finally {
@@ -68,6 +35,7 @@ export default function WarehouseMapScreen() {
     const rows: Record<number, Record<number, WarehouseLocation[]>> = {};
 
     for (const loc of locations) {
+      if (loc.row_num == null || loc.col_num == null) continue;
       if (!rows[loc.row_num]) {
         rows[loc.row_num] = {};
       }

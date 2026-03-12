@@ -269,7 +269,11 @@ export async function getTasks(): Promise<TaskComplete[]> {
 
     for (const task of tasks) {
       const taskItems = await database.getAllAsync<any>(
-        `SELECT ti.*, i.*, c.*, l.*
+        `SELECT
+           ti.id AS ti_id, ti.task_id, ti.requested_quantity, ti.picked_quantity, ti.status, ti.item_id,
+           i.id AS i_id, i.name AS i_name, i.barcode, i.description, i.quantity, i.category_id, i.location_id,
+           c.id AS c_id, c.name AS c_name, c.size_class, c.min_stock_level,
+           l.id AS l_id, l.row_num, l.col_num, l.shelf_level, l.is_xl, l.location_code, l.is_active
          FROM task_items ti
          LEFT JOIN items i ON ti.item_id = i.id
          LEFT JOIN categories c ON i.category_id = c.id
@@ -279,25 +283,25 @@ export async function getTasks(): Promise<TaskComplete[]> {
       );
 
       const items: TaskItemComplete[] = taskItems.map((ti) => ({
-        id: ti.id,
+        id: ti.ti_id,
         task_id: ti.task_id,
         requested_quantity: ti.requested_quantity,
         picked_quantity: ti.picked_quantity,
         status: ti.status,
         item: {
-          id: ti.item_id,
-          name: ti.name,
+          id: ti.i_id,
+          name: ti.i_name,
           barcode: ti.barcode,
           description: ti.description,
           quantity: ti.quantity,
-          category: ti.category_id ? {
-            id: ti.category_id,
-            name: ti.name,
+          category: ti.c_id ? {
+            id: ti.c_id,
+            name: ti.c_name,
             size_class: ti.size_class,
             min_stock_level: ti.min_stock_level,
           } : null,
-          location: ti.location_id ? {
-            id: ti.location_id,
+          location: ti.l_id ? {
+            id: ti.l_id,
             row_num: ti.row_num,
             col_num: ti.col_num,
             shelf_level: ti.shelf_level,
@@ -348,7 +352,11 @@ export async function getTaskById(id: number): Promise<TaskComplete | null> {
     }
 
     const taskItems = await database.getAllAsync<any>(
-      `SELECT ti.*, i.*, c.*, l.*
+      `SELECT
+         ti.id AS ti_id, ti.task_id, ti.requested_quantity, ti.picked_quantity, ti.status, ti.item_id,
+         i.id AS i_id, i.name AS i_name, i.barcode, i.description, i.quantity, i.category_id, i.location_id,
+         c.id AS c_id, c.name AS c_name, c.size_class, c.min_stock_level,
+         l.id AS l_id, l.row_num, l.col_num, l.shelf_level, l.is_xl, l.location_code, l.is_active
        FROM task_items ti
        LEFT JOIN items i ON ti.item_id = i.id
        LEFT JOIN categories c ON i.category_id = c.id
@@ -358,25 +366,25 @@ export async function getTaskById(id: number): Promise<TaskComplete | null> {
     );
 
     const items: TaskItemComplete[] = taskItems.map((ti) => ({
-      id: ti.id,
+      id: ti.ti_id,
       task_id: ti.task_id,
       requested_quantity: ti.requested_quantity,
       picked_quantity: ti.picked_quantity,
       status: ti.status,
       item: {
-        id: ti.item_id,
-        name: ti.name,
+        id: ti.i_id,
+        name: ti.i_name,
         barcode: ti.barcode,
         description: ti.description,
         quantity: ti.quantity,
-        category: ti.category_id ? {
-          id: ti.category_id,
-          name: ti.name,
+        category: ti.c_id ? {
+          id: ti.c_id,
+          name: ti.c_name,
           size_class: ti.size_class,
           min_stock_level: ti.min_stock_level,
         } : null,
-        location: ti.location_id ? {
-          id: ti.location_id,
+        location: ti.l_id ? {
+          id: ti.l_id,
           row_num: ti.row_num,
           col_num: ti.col_num,
           shelf_level: ti.shelf_level,

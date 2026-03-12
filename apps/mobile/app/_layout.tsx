@@ -78,6 +78,62 @@ export default function RootLayout() {
             headerShown: true,
           }}
         />
+        <Stack.Screen
+          name="admin"
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="admin/users"
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="admin/inventory"
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="admin/tasks"
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="admin/system"
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="admin/reports"
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="supervisor"
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="supervisor/tasks"
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="supervisor/workers"
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="supervisor/shortages"
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="supervisor/damages"
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="supervisor/stats"
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="admin/categories"
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="damage-report"
+          options={{ headerShown: false }}
+        />
       </Stack>
       <StatusBar style="auto" />
     </TamaguiProvider>

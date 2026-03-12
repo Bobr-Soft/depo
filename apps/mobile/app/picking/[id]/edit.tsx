@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Alert } from "react-native";
 import { useLocalSearchParams, router } from "expo-router";
 import { H2, Text, YStack, XStack, Button, Card, Spinner, Input, Separator, ScrollView } from "@repo/ui";
-import { ArrowLeft, Save, Edit3, AlertCircle, Package, Minus, Plus, Hash } from "@tamagui/lucide-icons";
+import { ArrowLeft, Save, Edit3, AlertCircle, Minus, Plus } from "@tamagui/lucide-icons";
 import { loadTask } from "@/components/api";
 import { TaskComplete } from "@/constants";
 import { updateTaskItemQuantity } from "@/services";

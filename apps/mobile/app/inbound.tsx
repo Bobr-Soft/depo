@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useRef, useEffect } from "react";
 import { Alert } from "react-native";
 import { YStack, XStack, Button, Text, H2, Card, ScrollView, Separator } from "@repo/ui";
-import { ScanBarcode, Package, ArrowLeft, RefreshCw, Trash2, Edit3, Save, CloudOff, CheckCircle2, AlertCircle } from "@tamagui/lucide-icons";
+import { ScanBarcode, Package, ArrowLeft, RefreshCw, Trash2, Edit3, Save, CheckCircle2, AlertCircle } from "@tamagui/lucide-icons";
 import { BarcodeScanner } from "@/components";
 import { router, useLocalSearchParams } from "expo-router";
 import { buildApiUrl, getApiUrl, getToken } from "@/services/secureStorage";
