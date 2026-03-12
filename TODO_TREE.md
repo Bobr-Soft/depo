@@ -5,17 +5,17 @@
 
 ## MOBILE APP (apps/mobile)
 
-- [ ] TODO[P0][MOBILE]: Implement real inbound persistence flow in `app/inbound.tsx`
-  - [ ] TODO: Replace demo `scannedItems` local-only save with API-backed item creation/update
-  - [ ] TODO: Resolve scanned barcode to existing item first; create only when not found
-  - [ ] TODO: Add quantity increment logic for repeated scans of same barcode
-  - [ ] TODO: Persist failures to offline queue and show retry state
-  - [ ] TODO: Show success/failure summary after batch save
+- [x] TODO[P0][MOBILE]: Implement real inbound persistence flow in `app/inbound.tsx`
+  - [x] TODO: Replace demo `scannedItems` local-only save with API-backed item creation/update
+  - [x] TODO: Resolve scanned barcode to existing item first; create only when not found
+  - [x] TODO: Add quantity increment logic for repeated scans of same barcode
+  - [x] TODO: Persist failures to offline queue and show retry state
+  - [x] TODO: Show success/failure summary after batch save
 
 - [ ] TODO[P0][MOBILE]: Fix picking completion consistency in `app/picking/[id].tsx` and `src/components/api.ts`
   - [ ] BUG: `loadTask()` reads cached data (`getTasksWithSync`) and may show stale status right after pick
   - [ ] TODO: After successful `taskItemPicked`, force server refresh for that task (or optimistic local recompute)
-  - [ ] TODO: Ensure task status transitions to `completed` immediately in UI when last item is picked
+  - [x] TODO: Ensure task status transitions to `completed` immediately in UI when last item is picked — `markItemAsPicked` in `database.ts` recomputes and persists task status
 
 - [ ] TODO[P0][MOBILE]: Fix completed-item edit path to keep task lifecycle consistent
   - [ ] BUG: `updateTaskItemQuantity()` updates only `task_items`, not local `tasks.status`
@@ -44,7 +44,7 @@
 - [ ] TODO[P2][MOBILE]: Data mapping cleanup
   - [ ] FIXME: `database.ts` currently stores `assigned_user_data: null` only
   - [ ] TODO: Persist/hydrate assignee metadata when provided by API
-  - [ ] TODO: Verify category/location field mapping in joined task item rows
+  - [x] TODO: Verify category/location field mapping in joined task item rows — fixed aliased column conflict in `database.ts` `getTasks`/`getTaskById`
 
 ## OTHER APPS — API + WEB
 

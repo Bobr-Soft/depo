@@ -38,10 +38,32 @@ async function testDBConnection() {
   }
 }
 
+async function ensureDamageReportsTable() {
+  try {
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS damage_reports (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        reported_by INT,
+        item_barcode VARCHAR(255),
+        item_name VARCHAR(255),
+        description TEXT NOT NULL,
+        status VARCHAR(50) DEFAULT 'pending',
+        reviewed_by INT,
+        review_note TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      )
+    `);
+  } catch (err) {
+    console.error('⚠️ Could not create damage_reports table:', err.message);
+  }
+}
+
 // Initialize database connection test
 let dbConnected = false;
 testDBConnection().then(result => {
   dbConnected = result;
+  if (result) ensureDamageReportsTable();
 });
 
 // Input validation helpers
@@ -451,6 +473,17 @@ function requireAdmin(req, res, next) {
     return res.status(403).json({ message: 'Admin privileges required' });
   }
 
+  next();
+}
+
+function requireSupervisorOrAdmin(req, res, next) {
+  if (!req.user) {
+    return res.status(401).json({ message: 'Authentication required' });
+  }
+  const userRole = req.user.role?.toLowerCase();
+  if (userRole !== 'admin' && userRole !== 'supervisor') {
+    return res.status(403).json({ message: 'Supervisor or Admin privileges required' });
+  }
   next();
 }
 
@@ -1985,6 +2018,237 @@ app.put('/tasks/:taskId/items/:itemId/picked', authenticateJWT, async (req, res)
   } catch (err) {
     console.error('❌ Error updating task item picked quantity:', err.message);
     res.status(500).json({ message: 'Database error' });
+  }
+});
+
+// ─── Damage Reports ──────────────────────────────────────────────────────────
+
+// Submit a damage report (any authenticated user)
+app.post('/damage-reports', authenticateJWT, async (req, res) => {
+  const { item_barcode, item_name, description } = req.body;
+
+  if (!description || typeof description !== 'string' || description.trim().length === 0 || description.length > 1000) {
+    return res.status(400).json({ message: 'Description is required (max 1000 characters)' });
+  }
+
+  try {
+    if (!dbConnected) return res.status(503).json({ message: 'Database not available' });
+    const userId = resolveAuthenticatedUserId(req);
+    if (!userId) return res.status(403).json({ message: 'User not found in database' });
+
+    const safeBarcode = typeof item_barcode === 'string' ? item_barcode.trim().slice(0, 255) : null;
+    const safeName = typeof item_name === 'string' ? item_name.trim().slice(0, 255) : null;
+
+    const [result] = await db.query(
+      `INSERT INTO damage_reports (reported_by, item_barcode, item_name, description, status)
+       VALUES (?, ?, ?, ?, 'pending')`,
+      [userId, safeBarcode, safeName, description.trim()]
+    );
+    return res.status(201).json({
+      id: Number(result.insertId),
+      reported_by: userId,
+      item_barcode: safeBarcode,
+      item_name: safeName,
+      description: description.trim(),
+      status: 'pending',
+    });
+  } catch (err) {
+    console.error('❌ Error creating damage report:', err.message);
+    return res.status(500).json({ message: 'Database error' });
+  }
+});
+
+// Get all damage reports (supervisor / admin)
+app.get('/damage-reports', authenticateJWT, requireSupervisorOrAdmin, async (req, res) => {
+  try {
+    if (!dbConnected) return res.status(503).json({ message: 'Database not available' });
+    const [rows] = await db.query(
+      `SELECT dr.*, u.email AS reporter_email
+       FROM damage_reports dr
+       LEFT JOIN users u ON u.id = dr.reported_by
+       ORDER BY dr.created_at DESC`
+    );
+    return res.json(rows);
+  } catch (err) {
+    console.error('❌ Error fetching damage reports:', err.message);
+    return res.status(500).json({ message: 'Database error' });
+  }
+});
+
+// Review a damage report (supervisor / admin)
+app.put('/damage-reports/:id/status', authenticateJWT, requireSupervisorOrAdmin, async (req, res) => {
+  const reportId = Number.parseInt(req.params.id, 10);
+  if (!Number.isInteger(reportId) || reportId <= 0) {
+    return res.status(400).json({ message: 'Invalid report ID' });
+  }
+
+  const { status, review_note } = req.body;
+  if (!['approved', 'rejected'].includes(status)) {
+    return res.status(400).json({ message: "Status must be 'approved' or 'rejected'" });
+  }
+
+  try {
+    if (!dbConnected) return res.status(503).json({ message: 'Database not available' });
+    const reviewerId = resolveAuthenticatedUserId(req);
+    const safeNote = typeof review_note === 'string' ? review_note.trim().slice(0, 500) : null;
+
+    const [result] = await db.query(
+      `UPDATE damage_reports SET status = ?, reviewed_by = ?, review_note = ?, updated_at = NOW() WHERE id = ?`,
+      [status, reviewerId, safeNote, reportId]
+    );
+    if (result.affectedRows === 0) return res.status(404).json({ message: 'Report not found' });
+
+    const [rows] = await db.query('SELECT * FROM damage_reports WHERE id = ?', [reportId]);
+    return res.json(rows[0]);
+  } catch (err) {
+    console.error('❌ Error updating damage report:', err.message);
+    return res.status(500).json({ message: 'Database error' });
+  }
+});
+
+// ─── Task CRUD (Admin) ────────────────────────────────────────────────────────
+
+// Create a new task
+app.post('/tasks', authenticateJWT, requireAdmin, async (req, res) => {
+  const { name, type, priority, deadline, assigned_user } = req.body;
+
+  if (!isValidString(name, 255)) {
+    return res.status(400).json({ message: 'Invalid task name' });
+  }
+  if (!['picking', 'inbound', 'transfer'].includes(type)) {
+    return res.status(400).json({ message: "Task type must be 'picking', 'inbound', or 'transfer'" });
+  }
+  const parsedPriority = Number.parseInt(String(priority), 10);
+  if (!Number.isInteger(parsedPriority) || parsedPriority < 1 || parsedPriority > 4) {
+    return res.status(400).json({ message: 'Priority must be 1 (critical) to 4 (low)' });
+  }
+
+  try {
+    if (!dbConnected) return res.status(503).json({ message: 'Database not available' });
+    const safeDeadline = deadline ? new Date(deadline) : null;
+    if (deadline && isNaN(safeDeadline?.getTime())) {
+      return res.status(400).json({ message: 'Invalid deadline date' });
+    }
+    const safeAssignedUser = Number.isInteger(Number(assigned_user)) && Number(assigned_user) > 0
+      ? Number(assigned_user) : null;
+
+    const [result] = await db.query(
+      `INSERT INTO tasks (name, type, priority, status, deadline, assigned_user, created_at, updated_at)
+       VALUES (?, ?, ?, 'pending', ?, ?, NOW(), NOW())`,
+      [name.trim(), type, parsedPriority, safeDeadline, safeAssignedUser]
+    );
+    const newId = Number(result.insertId);
+    const [rows] = await db.query('SELECT * FROM tasks WHERE id = ?', [newId]);
+    return res.status(201).json(rows[0]);
+  } catch (err) {
+    console.error('❌ Error creating task:', err.message);
+    return res.status(500).json({ message: 'Database error' });
+  }
+});
+
+// Update task fields (priority, status, assigned_user, name, deadline)
+app.put('/tasks/:id', authenticateJWT, requireAdmin, async (req, res) => {
+  const taskId = Number.parseInt(req.params.id, 10);
+  if (!Number.isInteger(taskId) || taskId <= 0) {
+    return res.status(400).json({ message: 'Invalid taskId' });
+  }
+
+  const { name, priority, status, assigned_user, deadline } = req.body;
+  const updates = [];
+  const values = [];
+
+  if (name !== undefined) {
+    if (!isValidString(name, 255)) return res.status(400).json({ message: 'Invalid task name' });
+    updates.push('name = ?');
+    values.push(name.trim());
+  }
+  if (priority !== undefined) {
+    const p = Number.parseInt(String(priority), 10);
+    if (!Number.isInteger(p) || p < 1 || p > 4) return res.status(400).json({ message: 'Priority must be 1-4' });
+    updates.push('priority = ?');
+    values.push(p);
+  }
+  if (status !== undefined) {
+    if (!['pending', 'in_progress', 'completed', 'cancelled'].includes(status)) {
+      return res.status(400).json({ message: 'Invalid status value' });
+    }
+    updates.push('status = ?');
+    values.push(status);
+  }
+  if ('assigned_user' in req.body) {
+    const au = Number.isInteger(Number(assigned_user)) && Number(assigned_user) > 0
+      ? Number(assigned_user) : null;
+    updates.push('assigned_user = ?');
+    values.push(au);
+  }
+  if ('deadline' in req.body) {
+    const dl = deadline ? new Date(deadline) : null;
+    if (deadline && isNaN(dl?.getTime())) return res.status(400).json({ message: 'Invalid deadline date' });
+    updates.push('deadline = ?');
+    values.push(dl);
+  }
+
+  if (updates.length === 0) return res.status(400).json({ message: 'No fields to update' });
+  updates.push('updated_at = NOW()');
+  values.push(taskId);
+
+  try {
+    if (!dbConnected) return res.status(503).json({ message: 'Database not available' });
+    const [result] = await db.query(`UPDATE tasks SET ${updates.join(', ')} WHERE id = ?`, values);
+    if (result.affectedRows === 0) return res.status(404).json({ message: 'Task not found' });
+    const [rows] = await db.query('SELECT * FROM tasks WHERE id = ?', [taskId]);
+    return res.json(rows[0]);
+  } catch (err) {
+    console.error('❌ Error updating task:', err.message);
+    return res.status(500).json({ message: 'Database error' });
+  }
+});
+
+// Delete task
+app.delete('/tasks/:id', authenticateJWT, requireAdmin, async (req, res) => {
+  const taskId = Number.parseInt(req.params.id, 10);
+  if (!Number.isInteger(taskId) || taskId <= 0) {
+    return res.status(400).json({ message: 'Invalid taskId' });
+  }
+  try {
+    if (!dbConnected) return res.status(503).json({ message: 'Database not available' });
+    const [result] = await db.query('DELETE FROM tasks WHERE id = ?', [taskId]);
+    if (result.affectedRows === 0) return res.status(404).json({ message: 'Task not found' });
+    return res.json({ message: 'Task deleted', taskId });
+  } catch (err) {
+    console.error('❌ Error deleting task:', err.message);
+    return res.status(500).json({ message: 'Database error' });
+  }
+});
+
+// Accept shortage: supervisor marks a task item shortage as acknowledged (status = shortage_accepted)
+app.put('/tasks/:taskId/items/:itemId/accept-shortage', authenticateJWT, requireSupervisorOrAdmin, async (req, res) => {
+  const taskId = Number.parseInt(req.params.taskId, 10);
+  const itemId = Number.parseInt(req.params.itemId, 10);
+  if (!Number.isInteger(taskId) || taskId <= 0 || !Number.isInteger(itemId) || itemId <= 0) {
+    return res.status(400).json({ message: 'Invalid taskId or itemId' });
+  }
+  try {
+    if (!dbConnected) return res.status(503).json({ message: 'Database not available' });
+    const [result] = await db.query(
+      `UPDATE task_items SET status = 'shortage_accepted' WHERE task_id = ? AND item_id = ? AND status != 'picked'`,
+      [taskId, itemId]
+    );
+    if (result.affectedRows === 0) return res.status(404).json({ message: 'Task item not found or already picked' });
+    // Check if all items are now done (picked or shortage_accepted)
+    const [rows] = await db.query(
+      `SELECT COUNT(*) AS total,
+              SUM(CASE WHEN status IN ('picked','shortage_accepted') THEN 1 ELSE 0 END) AS done
+       FROM task_items WHERE task_id = ?`,
+      [taskId]
+    );
+    if (rows[0]?.total > 0 && rows[0]?.done === rows[0]?.total) {
+      await db.query('UPDATE tasks SET status = ?, updated_at = NOW() WHERE id = ?', ['completed', taskId]);
+    }
+    return res.json({ message: 'Shortage accepted', taskId, itemId });
+  } catch (err) {
+    console.error('❌ Error accepting shortage:', err.message);
+    return res.status(500).json({ message: 'Database error' });
   }
 });
 
