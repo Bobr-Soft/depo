@@ -1,80 +1,25 @@
-/**
- * Reusable Barcode and QR Code Scanner Component
- *
- * A professional, full-featured scanner that supports multiple barcode formats.
- * Can be used as a standalone screen or embedded in other screens.
- *
- * USAGE:
- * ```tsx
- * import { BarcodeScanner } from '@/components';
- *
- * function MyScreen() {
- *   const handleScan = (data: string, type: string) => {
- *     console.log('Scanned:', data, type);
- *   };
- *
- *   return (
- *     <BarcodeScanner
- *       onScan={handleScan}
- *       onClose={() => navigation.goBack()}
- *       title="Scan Product"
- *       instruction="Scan barcode or QR code"
- *     />
- *   );
- * }
- * ```
- *
- * FEATURES:
- * - Supports QR codes and barcodes (EAN, UPC, Code128, etc.)
- * - Animated scanning frame with visual feedback
- * - Flashlight toggle for low-light conditions
- * - Haptic feedback on successful scan
- * - Automatic permission handling
- * - Customizable UI and callbacks
- */
-
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { StyleSheet, Dimensions } from "react-native";
 import { CameraView, useCameraPermissions, BarcodeScanningResult } from "expo-camera";
-import { YStack, XStack, Button, Text, H3 } from "@repo/ui";
-import { X, Flashlight, FlashlightOff } from "@tamagui/lucide-icons";
+import { YStack, XStack, Button, Text, H2 } from "@repo/ui";
+import { X, Flashlight, FlashlightOff, Camera, CheckCircle2 } from "@tamagui/lucide-icons";
 import * as Haptics from "expo-haptics";
 
 const { width } = Dimensions.get("window");
 const SCAN_AREA_SIZE = width * 0.7;
 
 export interface BarcodeScannerProps {
-  /** Callback when barcode/QR code is scanned */
   onScan: (data: string, type: string) => void;
-  /** Callback when close button is pressed */
   onClose?: () => void;
-  /** Title displayed in header (default: "Szkennelés") */
   title?: string;
-  /** Instruction text shown at bottom (default: "Helyezze a vonalkódot vagy QR kódot a keretbe") */
   instruction?: string;
-  /** Auto-reset delay in ms after scan (default: 2000, set to 0 to disable) */
   autoResetDelay?: number;
-  /** Show close button in header (default: true) */
   showCloseButton?: boolean;
-  /** Enable flashlight toggle (default: true) */
   enableFlashlight?: boolean;
-  /** Show haptic feedback on scan (default: true) */
   enableHaptics?: boolean;
-  /** Custom barcode types to scan (defaults to all supported types) */
   barcodeTypes?: (
-    | "qr"
-    | "ean13"
-    | "ean8"
-    | "code128"
-    | "code39"
-    | "code93"
-    | "codabar"
-    | "upc_a"
-    | "upc_e"
-    | "itf14"
-    | "pdf417"
-    | "aztec"
-    | "datamatrix"
+    | "qr" | "ean13" | "ean8" | "code128" | "code39" | "code93"
+    | "codabar" | "upc_a" | "upc_e" | "itf14" | "pdf417" | "aztec" | "datamatrix"
   )[];
 }
 
@@ -88,19 +33,8 @@ export function BarcodeScanner({
   enableFlashlight = true,
   enableHaptics = true,
   barcodeTypes = [
-    "qr",
-    "ean13",
-    "ean8",
-    "code128",
-    "code39",
-    "code93",
-    "codabar",
-    "upc_a",
-    "upc_e",
-    "itf14",
-    "pdf417",
-    "aztec",
-    "datamatrix",
+    "qr", "ean13", "ean8", "code128", "code39", "code93",
+    "codabar", "upc_a", "upc_e", "itf14", "pdf417", "aztec", "datamatrix",
   ],
 }: BarcodeScannerProps) {
   const [permission, requestPermission] = useCameraPermissions();
@@ -140,32 +74,29 @@ export function BarcodeScanner({
       return;
     }
 
-    // Immediately lock to prevent any duplicate scans
     scanLock.current = true;
     lastScanRef.current = { data: normalizedData, timestamp: now };
     setScanned(true);
     setScannedData(normalizedData);
 
-    // Haptic feedback
     if (enableHaptics) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     }
 
-    // Call callback
     onScanRef.current(normalizedData, type);
   }, [enableHaptics]);
 
-  // Manual reset function (can be called externally if needed)
   const resetScanner = useCallback(() => {
     setScanned(false);
     setScannedData(null);
     scanLock.current = false;
   }, []);
 
+  // Engedélykérő képernyő (kifésülve a DEPO arculatára)
   if (!permission) {
     return (
       <YStack flex={1} justifyContent="center" alignItems="center" padding="$4" backgroundColor="$background">
-        <Text>Kamera engedély betöltése...</Text>
+        <Text color="$color11">Kamera engedély betöltése...</Text>
       </YStack>
     );
   }
@@ -173,15 +104,18 @@ export function BarcodeScanner({
   if (!permission.granted) {
     return (
       <YStack flex={1} justifyContent="center" alignItems="center" padding="$4" gap="$4" backgroundColor="$background">
-        <H3 textAlign="center">Kamera hozzáférés szükséges</H3>
-        <Text textAlign="center" color="$color11">
-          Az alkalmazásnak hozzá kell férnie a kamerához vonalkódok és QR kódok szkennelésére.
-        </Text>
+        <Camera size={64} color="$color8" opacity={0.5} />
+        <YStack alignItems="center" gap="$1" marginBottom="$2">
+          <H2 color="$color12" textAlign="center">Kamera hozzáférés</H2>
+          <Text textAlign="center" color="$color10" paddingHorizontal="$4">
+            A vonalkódok és QR kódok beolvasásához engedélyezned kell a kamerát az eszközön.
+          </Text>
+        </YStack>
         <Button size="$5" theme="blue" onPress={requestPermission}>
-          Engedély megadása
+          <Text fontWeight="600">Engedély megadása</Text>
         </Button>
         {showCloseButton && onClose && (
-          <Button size="$5" chromeless onPress={onClose}>
+          <Button size="$4" theme="gray" variant="outlined" onPress={onClose} marginTop="$2">
             Vissza
           </Button>
         )}
@@ -199,32 +133,24 @@ export function BarcodeScanner({
         barcodeScannerSettings={scannerSettings}
         onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
       >
-        {/* Header */}
-        <YStack padding="$4" paddingTop="$8" backgroundColor="rgba(0,0,0,0.5)">
+        {/* Fejléc */}
+        <YStack padding="$4" paddingTop="$8" backgroundColor="rgba(0, 0, 0, 0.7)">
           <XStack justifyContent="space-between" alignItems="center">
             {showCloseButton && onClose ? (
-              <Button
-                size="$4"
-                circular
-                icon={X}
-                backgroundColor="rgba(255,255,255,0.2)"
-                borderColor="transparent"
-                onPress={onClose}
-              />
+              <Button size="$4" circular theme="gray" icon={X} onPress={onClose} />
             ) : (
               <YStack width={48} />
             )}
-            <Text color="white" fontSize={18} fontWeight="600">
+            <Text color="$color12" fontSize={18} fontWeight="700">
               {title}
             </Text>
             {enableFlashlight ? (
               <Button
                 size="$4"
                 circular
+                theme={torchOn ? "blue" : "gray"}
                 icon={torchOn ? FlashlightOff : Flashlight}
-                backgroundColor="rgba(255,255,255,0.2)"
-                borderColor="transparent"
-                onPress={() => setTorchOn((previous) => !previous)}
+                onPress={() => setTorchOn((prev) => !prev)}
               />
             ) : (
               <YStack width={48} />
@@ -232,106 +158,75 @@ export function BarcodeScanner({
           </XStack>
         </YStack>
 
-        {/* Scanning Frame */}
+        {/* Célkereszt (Keret) */}
         <YStack flex={1} justifyContent="center" alignItems="center">
           <YStack width={SCAN_AREA_SIZE} height={SCAN_AREA_SIZE} position="relative">
-            {/* Corner borders */}
-            <YStack
-              position="absolute"
-              top={0}
-              left={0}
-              width={60}
-              height={60}
-              borderTopWidth={4}
-              borderLeftWidth={4}
-              borderColor={scanned ? "#10B981" : "white"}
-              borderTopLeftRadius={12}
-            />
-            <YStack
-              position="absolute"
-              top={0}
-              right={0}
-              width={60}
-              height={60}
-              borderTopWidth={4}
-              borderRightWidth={4}
-              borderColor={scanned ? "#10B981" : "white"}
-              borderTopRightRadius={12}
-            />
-            <YStack
-              position="absolute"
-              bottom={0}
-              left={0}
-              width={60}
-              height={60}
-              borderBottomWidth={4}
-              borderLeftWidth={4}
-              borderColor={scanned ? "#10B981" : "white"}
-              borderBottomLeftRadius={12}
-            />
-            <YStack
-              position="absolute"
-              bottom={0}
-              right={0}
-              width={60}
-              height={60}
-              borderBottomWidth={4}
-              borderRightWidth={4}
-              borderColor={scanned ? "#10B981" : "white"}
-              borderBottomRightRadius={12}
-            />
+            {/* Sarkok */}
+            {['TopLeft', 'TopRight', 'BottomLeft', 'BottomRight'].map((corner) => (
+              <YStack
+                key={corner}
+                position="absolute"
+                top={corner.includes('Top') ? 0 : undefined}
+                bottom={corner.includes('Bottom') ? 0 : undefined}
+                left={corner.includes('Left') ? 0 : undefined}
+                right={corner.includes('Right') ? 0 : undefined}
+                width={60}
+                height={60}
+                borderTopWidth={corner.includes('Top') ? 4 : 0}
+                borderBottomWidth={corner.includes('Bottom') ? 4 : 0}
+                borderLeftWidth={corner.includes('Left') ? 4 : 0}
+                borderRightWidth={corner.includes('Right') ? 4 : 0}
+                borderColor={scanned ? "$green10" : "$blue10"}
+                borderTopLeftRadius={corner === 'TopLeft' ? 12 : 0}
+                borderTopRightRadius={corner === 'TopRight' ? 12 : 0}
+                borderBottomLeftRadius={corner === 'BottomLeft' ? 12 : 0}
+                borderBottomRightRadius={corner === 'BottomRight' ? 12 : 0}
+              />
+            ))}
 
-            {/* Scanning line animation */}
+            {/* Animált vonal */}
             {!scanned && (
               <YStack
                 position="absolute"
                 width="100%"
                 height={2}
-                backgroundColor="white"
-                opacity={0.7}
+                backgroundColor="$blue10"
+                opacity={0.8}
                 top="50%"
                 animation="quick"
                 animateOnly={["opacity"]}
               />
             )}
 
-            {/* Success indicator */}
+            {/* Siker Overlay */}
             {scanned && (
-              <YStack
-                flex={1}
-                justifyContent="center"
-                alignItems="center"
-                backgroundColor="rgba(16, 185, 129, 0.2)"
-                borderRadius={12}
-              >
-                <YStack backgroundColor="#10B981" padding="$4" borderRadius="$10">
-                  <Text color="white" fontSize={20} fontWeight="bold">
-                    ✓ Sikeresen beolvasva
-                  </Text>
+              <YStack flex={1} justifyContent="center" alignItems="center" backgroundColor="rgba(25, 130, 109, 0.2)" borderRadius={12}>
+                <YStack backgroundColor="$green5" padding="$4" borderRadius="$10" borderWidth={2} borderColor="$green8">
+                  <XStack gap="$2" alignItems="center">
+                    <CheckCircle2 size={24} color="$green10" />
+                    <Text color="$green11" fontSize={18} fontWeight="bold">Sikeres beolvasás</Text>
+                  </XStack>
                 </YStack>
               </YStack>
             )}
           </YStack>
         </YStack>
 
-        {/* Instructions */}
-        <YStack padding="$6" backgroundColor="rgba(0,0,0,0.5)" gap="$3">
-          <Text color="white" textAlign="center" fontSize={16}>
-            {scanned ? "Kód beolvasva!" : instruction}
+        {/* Instrukciók */}
+        <YStack padding="$6" paddingBottom="$10" backgroundColor="rgba(0, 0, 0, 0.7)" gap="$3">
+          <Text color="$color11" textAlign="center" fontSize={16} fontWeight="600">
+            {scanned ? "Kód rögzítve!" : instruction}
           </Text>
           {scannedData && (
-            <Text color="white" textAlign="center" fontSize={14} opacity={0.8}>
-              {scannedData}
-            </Text>
+            <YStack backgroundColor="$color4" padding="$2" borderRadius="$3" alignSelf="center">
+              <Text color="$color12" textAlign="center" fontSize={16} fontWeight="700" letterSpacing={1}>
+                {scannedData}
+              </Text>
+            </YStack>
           )}
           {scanned && autoResetDelay === 0 && (
-            <Button
-              size="$3"
-              theme="blue"
-              marginTop="$2"
-              onPress={resetScanner}
-            >
-              Újra szkennelés
+            <Button size="$5" theme="blue" marginTop="$3" onPress={resetScanner}>
+              <Text fontWeight="600">Újra szkennelés</Text>
             </Button>
           )}
         </YStack>

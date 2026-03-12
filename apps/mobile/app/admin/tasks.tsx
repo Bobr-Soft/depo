@@ -221,7 +221,7 @@ export default function AdminTasksScreen() {
                       onPress={() => handleChangePriority(task)}
                       disabled={!syncStatus.isOnline}
                     >
-                      P{task.priority}
+                      <Text>P{task.priority}</Text>
                     </Button>
                     <Button
                       size="$2"
