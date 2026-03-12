@@ -20,6 +20,15 @@ app.use(
 );
 app.use(express.json());
 
+// Simulator delay middleware — delays all non-simulator API responses
+app.use((req, res, next) => {
+  if (simulatorDelay.enabled && !req.path.startsWith('/simulator')) {
+    setTimeout(next, simulatorDelay.ms);
+  } else {
+    next();
+  }
+});
+
 if (!process.env.JWT_SECRET) {
   console.error('❌ FATAL: JWT_SECRET environment variable is not set. Refusing to start.');
   process.exit(1);
@@ -65,6 +74,10 @@ testDBConnection().then(result => {
   dbConnected = result;
   if (result) ensureDamageReportsTable();
 });
+
+// ─── Simulator In-Memory State ────────────────────────────────────────────────
+const blockedUsers = new Set();
+const simulatorDelay = { enabled: false, ms: 5000 };
 
 // Input validation helpers
 function isValidEmail(email) {
@@ -442,6 +455,10 @@ async function authenticateJWT(req, res, next) {
         const [rows] = await db.query('SELECT * FROM users WHERE LOWER(email) = LOWER(?)', [decoded.email]);
         if (rows.length === 0) {
           return res.status(403).json({ message: 'Access denied: User not found' });
+        }
+        // Simulator: block-user invalidates sessions for testing mobile 401 flows
+        if (blockedUsers.has(decoded.email.toLowerCase())) {
+          return res.status(401).json({ message: 'Session invalidated by simulator' });
         }
         req.user = { ...decoded, dbUser: rows[0] };
       } catch (dbErr) {
@@ -2252,7 +2269,189 @@ app.put('/tasks/:taskId/items/:itemId/accept-shortage', authenticateJWT, require
   }
 });
 
-const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => {
-  console.log(`✅ Server running on port ${PORT}`);
+// ─── Simulator Endpoints ─────────────────────────────────────────────────────
+
+// GET /simulator/status — current in-memory simulator state
+app.get('/simulator/status', authenticateJWT, requireAdmin, (req, res) => {
+  res.json({
+    delay: simulatorDelay,
+    blockedUsers: [...blockedUsers],
+  });
 });
+
+// POST /simulator/spawn-task — create a task + task_items in a single transaction
+app.post('/simulator/spawn-task', authenticateJWT, requireAdmin, async (req, res) => {
+  const { name, type, priority, items } = req.body;
+
+  if (!isValidString(name, 255)) {
+    return res.status(400).json({ message: 'Invalid task name' });
+  }
+  if (!['picking', 'inbound', 'transfer'].includes(type)) {
+    return res.status(400).json({ message: "Task type must be 'picking', 'inbound', or 'transfer'" });
+  }
+  const parsedPriority = Number.parseInt(String(priority), 10);
+  if (!Number.isInteger(parsedPriority) || parsedPriority < 1 || parsedPriority > 4) {
+    return res.status(400).json({ message: 'Priority must be 1–4' });
+  }
+  if (!Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ message: 'items array is required' });
+  }
+  const parsedItems = items
+    .map(i => ({
+      item_id: Number.parseInt(String(i?.item_id), 10),
+      requested_quantity: Number.parseInt(String(i?.requested_quantity), 10),
+    }))
+    .filter(i => Number.isInteger(i.item_id) && i.item_id > 0 && Number.isInteger(i.requested_quantity) && i.requested_quantity > 0);
+  if (parsedItems.length !== items.length) {
+    return res.status(400).json({ message: 'Invalid items payload – check item_id and requested_quantity' });
+  }
+
+  if (!dbConnected) return res.status(503).json({ message: 'Database not available' });
+
+  const connection = await db.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    const itemIds = parsedItems.map(i => i.item_id);
+    const placeholders = itemIds.map(() => '?').join(',');
+    const [existingItems] = await connection.query(
+      `SELECT id FROM items WHERE id IN (${placeholders})`,
+      itemIds
+    );
+    if (existingItems.length !== parsedItems.length) {
+      await connection.rollback();
+      return res.status(404).json({ message: 'One or more items not found' });
+    }
+
+    const [taskResult] = await connection.query(
+      `INSERT INTO tasks (name, type, source_id, assigned_user, status, priority, deadline, created_at, updated_at)
+       VALUES (?, ?, 'SIMULATOR', NULL, 'pending', ?, NULL, NOW(), NOW())`,
+      [name.trim(), type, parsedPriority]
+    );
+    const taskId = Number(taskResult.insertId);
+
+    for (const item of parsedItems) {
+      await connection.query(
+        `INSERT INTO task_items (task_id, item_id, requested_quantity, picked_quantity, status)
+         VALUES (?, ?, ?, 0, 'pending')`,
+        [taskId, item.item_id, item.requested_quantity]
+      );
+    }
+
+    await connection.commit();
+
+    const [taskRows] = await db.query('SELECT * FROM tasks WHERE id = ?', [taskId]);
+    const [taskItemRows] = await db.query(
+      `SELECT ti.task_id, ti.item_id, ti.requested_quantity, ti.picked_quantity, ti.status,
+              i.name AS item_name, i.barcode
+       FROM task_items ti
+       JOIN items i ON i.id = ti.item_id
+       WHERE ti.task_id = ?
+       ORDER BY ti.id ASC`,
+      [taskId]
+    );
+
+    return res.status(201).json({ task: taskRows[0], items: taskItemRows });
+  } catch (err) {
+    await connection.rollback();
+    console.error('❌ Error spawning simulator task:', err.message);
+    return res.status(500).json({ message: 'Database error' });
+  } finally {
+    connection.release();
+  }
+});
+
+// POST /simulator/nuke — hard-delete all FAKER-tagged test data
+app.post('/simulator/nuke', authenticateJWT, requireAdmin, async (req, res) => {
+  if (!dbConnected) return res.status(503).json({ message: 'Database not available' });
+
+  const connection = await db.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    // 1. Task items belonging to [FAKER] tasks
+    await connection.query(
+      `DELETE ti FROM task_items ti
+       INNER JOIN tasks t ON t.id = ti.task_id
+       WHERE t.name LIKE '[FAKER]%'`
+    );
+    // 2. [FAKER] tasks
+    const [taskResult] = await connection.query(
+      `DELETE FROM tasks WHERE name LIKE '[FAKER]%'`
+    );
+    // 3. Task items still referencing FAKER_ items (orphaned by non-faker tasks)
+    await connection.query(
+      `DELETE ti FROM task_items ti
+       INNER JOIN items i ON i.id = ti.item_id
+       WHERE i.barcode LIKE ?`,
+      ['FAKER\\_%']
+    );
+    // 4. FAKER_ items
+    const [itemResult] = await connection.query(
+      `DELETE FROM items WHERE barcode LIKE ?`,
+      ['FAKER\\_%']
+    );
+    // 5. [FAKER] damage reports
+    const [reportResult] = await connection.query(
+      `DELETE FROM damage_reports WHERE description LIKE '[FAKER]%'`
+    );
+
+    await connection.commit();
+    return res.json({
+      message: 'Test data nuked successfully',
+      deleted: {
+        tasks: taskResult.affectedRows,
+        items: itemResult.affectedRows,
+        damageReports: reportResult.affectedRows,
+      },
+    });
+  } catch (err) {
+    await connection.rollback();
+    console.error('❌ Error nuking test data:', err.message);
+    return res.status(500).json({ message: 'Database error' });
+  } finally {
+    connection.release();
+  }
+});
+
+// POST /simulator/delay — enable/disable global API response delay
+app.post('/simulator/delay', authenticateJWT, requireAdmin, (req, res) => {
+  const { enabled, ms } = req.body;
+  simulatorDelay.enabled = Boolean(enabled);
+  const parsedMs = Number.parseInt(String(ms), 10);
+  if (Number.isInteger(parsedMs) && parsedMs > 0 && parsedMs <= 30000) {
+    simulatorDelay.ms = parsedMs;
+  }
+  console.log(`🔧 Simulator delay: ${simulatorDelay.enabled ? `ACTIVE (${simulatorDelay.ms}ms)` : 'DISABLED'}`);
+  res.json({ delay: simulatorDelay });
+});
+
+// POST /simulator/block-user — add/remove a user from the blocked set (forces 401)
+app.post('/simulator/block-user', authenticateJWT, requireAdmin, (req, res) => {
+  const { email, blocked } = req.body;
+  if (!isValidEmail(String(email || ''))) {
+    return res.status(400).json({ message: 'Invalid email' });
+  }
+  const normalizedEmail = String(email).toLowerCase().trim();
+  if (blocked) {
+    blockedUsers.add(normalizedEmail);
+    console.log(`🚫 Simulator: blocked ${normalizedEmail}`);
+  } else {
+    blockedUsers.delete(normalizedEmail);
+    console.log(`✅ Simulator: unblocked ${normalizedEmail}`);
+  }
+  res.json({
+    email: normalizedEmail,
+    blocked: blockedUsers.has(normalizedEmail),
+    blockedUsers: [...blockedUsers],
+  });
+});
+
+const PORT = process.env.PORT || 4000;
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`✅ Server running on port ${PORT}`);
+  });
+}
+
+module.exports = app;

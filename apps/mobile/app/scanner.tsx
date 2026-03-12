@@ -1,10 +1,3 @@
-/**
- * Scanner Screen
- *
- * Standalone scanner screen that uses the reusable BarcodeScanner component.
- * Shows an alert dialog when a code is scanned.
- */
-
 import React, { useState, useRef } from "react";
 import { Alert } from "react-native";
 import { Stack, router } from "expo-router";
@@ -15,23 +8,20 @@ export default function ScannerScreen() {
   const isProcessing = useRef(false);
 
   const handleScan = (data: string, type: string) => {
-    // Prevent multiple scans while processing
     if (isProcessing.current) return;
-
     isProcessing.current = true;
 
-    // Show alert with scanned data
     Alert.alert(
-      "Szkennelve",
+      "Kód beolvasva",
       `Típus: ${type}\nAdat: ${data}`,
       [
         {
           text: "Újra szkennelés",
           onPress: () => {
             isProcessing.current = false;
-            setScanKey(prev => prev + 1);
+            setScanKey((prev) => prev + 1);
           },
-          style: "default"
+          style: "default",
         },
         {
           text: "Szerkesztés",
@@ -39,10 +29,10 @@ export default function ScannerScreen() {
             isProcessing.current = false;
             router.push({
               pathname: "/edit",
-              params: { code: data, type: type }
+              params: { code: data, type: type },
             });
           },
-          style: "default"
+          style: "default",
         },
         {
           text: "Bezárás",
@@ -50,14 +40,14 @@ export default function ScannerScreen() {
             isProcessing.current = false;
             router.back();
           },
-          style: "cancel"
-        }
+          style: "cancel",
+        },
       ],
       {
         cancelable: false,
         onDismiss: () => {
           isProcessing.current = false;
-        }
+        },
       }
     );
   };
@@ -69,8 +59,8 @@ export default function ScannerScreen() {
         key={scanKey}
         onScan={handleScan}
         onClose={() => router.back()}
-        title="Szkennelés"
-        instruction="Helyezze a vonalkódot vagy QR kódot a keretbe"
+        title="Általános Szkenner"
+        instruction="Keresd meg a termék vonalkódját vagy QR kódját."
         autoResetDelay={0}
       />
     </>
