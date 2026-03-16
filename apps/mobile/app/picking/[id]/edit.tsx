@@ -5,7 +5,7 @@ import { H2, Text, YStack, XStack, Button, Card, Spinner, Input, Separator, Scro
 import { ArrowLeft, Save, Edit3, AlertCircle, Minus, Plus } from "@tamagui/lucide-icons";
 import { loadTask } from "@/components/api";
 import { TaskComplete } from "@/constants";
-import { updateTaskItemQuantity } from "@/services";
+import { syncData, updateTaskItemQuantity } from "@/services";
 
 export default function PickingCompletedItemEditScreen() {
   const { id, item_id } = useLocalSearchParams<{ id: string; item_id: string }>();
@@ -82,6 +82,7 @@ export default function PickingCompletedItemEditScreen() {
     setSaving(true);
     try {
       await updateTaskItemQuantity(selectedItem.id, parsedPickedQuantity);
+      await syncData();
       Alert.alert('Sikeres mentés', 'A tétel mennyisége frissítve lett.', [
         { text: 'OK', onPress: () => router.back() },
       ]);

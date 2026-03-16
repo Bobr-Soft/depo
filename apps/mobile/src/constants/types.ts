@@ -9,13 +9,13 @@
  * console.log(task.name);
  * console.log(task.assigned_user_data?.email);
  * task.items.forEach(item => {
- *   console.log(item.item.name, item.requested_quantity);
+ * console.log(item.item.name, item.requested_quantity);
  * });
  *
  * // Using task summary in a list
  * const tasks: TaskSummary[] = await api.getTasks();
  * tasks.forEach(task => {
- *   console.log(`${task.name}: ${task.completion_percentage}%`);
+ * console.log(`${task.name}: ${task.completion_percentage}%`);
  * });
  */
 
@@ -59,9 +59,9 @@ export interface Location {
   row_num: number;
   col_num: number;
   shelf_level: number;
-  is_xl: boolean;
-  location_code: string; // Format: "SS-OO-PP"
-  is_active: boolean;
+  is_xl: boolean | number; // Support both backend implementations (SQLite often uses 1/0)
+  location_code: string; // Format: "SS-OO-PP" (e.g., "01-02-01")
+  is_active: boolean | number;
 }
 
 export interface Item {
@@ -128,7 +128,8 @@ export interface TaskComplete extends Task {
 }
 
 /**
- * Task item with complete item details
+ * Task item with complete item details.
+ * Contains the joined location data necessary for Serpentine routing.
  */
 export interface TaskItemComplete {
   id: number;
@@ -143,8 +144,9 @@ export interface TaskItemComplete {
     description: string | null;
     quantity: number;
     category: Category | null;
-    location: Location | null;
+    location: Location | null; // Required for displaying the destination on the Picking UI
   };
+  location?: Location | null; // Top level location reference if the backend flattens the response
 }
 
 /**
@@ -226,6 +228,15 @@ export interface LoanItemRequest {
   quantity: number;
 }
 
+/**
+ * Request payload for allocating a physical location to an incoming item
+ */
+export interface PutawayRequest {
+  barcode: string;
+  quantity: number;
+  isXl: boolean;
+}
+
 // ============================================================
 // API RESPONSE TYPES
 // ============================================================
@@ -261,6 +272,14 @@ export interface GetTasksResponse {
 export interface TaskMutationResponse {
   task: TaskComplete;
   message: string;
+}
+
+/**
+ * Response from the putaway allocation algorithm
+ */
+export interface PutawayResponse {
+  location_code: string;
+  location_id: number;
 }
 
 // ============================================================

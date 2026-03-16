@@ -2,7 +2,8 @@ const express = require('express');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const db = require('./db');
-const { getTasksForUser } = require('./tasks');
+const { getTaskByIdForUser, getTasksForUser } = require('./tasks');
+const { allocatePutawayLocation } = require('./wms');
 require('dotenv').config();
 
 const app = express();
@@ -1759,7 +1760,8 @@ app.get('/tasks', authenticateJWT, async (req, res) => {
     if (dbConnected) {
       const userEmail = req.user.email;
       const userId = resolveAuthenticatedUserId(req);
-      const tasks = await getTasksForUser(userEmail, userId);
+      const userRole = req.user?.role ?? req.user?.dbUser?.role ?? null;
+      const tasks = await getTasksForUser(userEmail, userId, userRole);
       res.json(tasks);
     } else {
       res.status(503).json({ message: 'Database not available' });
@@ -1783,6 +1785,157 @@ function resolveAuthenticatedUserId(req) {
 
   return null;
 }
+
+function parseBooleanInput(value) {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+
+  if (typeof value === 'number') {
+    if (value === 1) {
+      return true;
+    }
+    if (value === 0) {
+      return false;
+    }
+  }
+
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'true' || normalized === '1') {
+      return true;
+    }
+    if (normalized === 'false' || normalized === '0') {
+      return false;
+    }
+  }
+
+  return null;
+}
+
+async function handleGetTaskById(req, res) {
+  const parsedTaskId = Number.parseInt(req.params.id, 10);
+  if (!Number.isInteger(parsedTaskId) || parsedTaskId <= 0) {
+    return res.status(400).json({ message: 'Invalid task id' });
+  }
+
+  if (!dbConnected) {
+    return res.status(503).json({ message: 'Database not available' });
+  }
+
+  try {
+    const userEmail = req.user?.email ?? '';
+    const userId = resolveAuthenticatedUserId(req);
+    const userRole = req.user?.role ?? req.user?.dbUser?.role ?? null;
+    const task = await getTaskByIdForUser(parsedTaskId, userEmail, userId, userRole);
+
+    if (!task) {
+      return res.status(404).json({ message: 'Task not found' });
+    }
+
+    return res.json(task);
+  } catch (err) {
+    console.error('❌ Error fetching task details:', err.message);
+    return res.status(500).json({ message: 'Database error' });
+  }
+}
+
+async function handleInboundPutaway(req, res) {
+  const parsedItemId = Number.parseInt(String(req.body?.itemId), 10);
+  const parsedQuantity = Number.parseInt(String(req.body?.quantity), 10);
+  const parsedIsXl = parseBooleanInput(req.body?.isXl);
+
+  if (!Number.isInteger(parsedItemId) || parsedItemId <= 0) {
+    return res.status(400).json({ message: 'itemId must be a positive integer' });
+  }
+
+  if (!Number.isInteger(parsedQuantity) || parsedQuantity <= 0) {
+    return res.status(400).json({ message: 'quantity must be a positive integer' });
+  }
+
+  if (parsedIsXl === null) {
+    return res.status(400).json({ message: 'isXl must be a boolean' });
+  }
+
+  if (!dbConnected) {
+    return res.status(503).json({ message: 'Database not available' });
+  }
+
+  const connection = await db.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const [itemRows] = await connection.query(
+      `SELECT id
+       FROM items
+       WHERE id = ?
+       LIMIT 1
+       FOR UPDATE`,
+      [parsedItemId]
+    );
+
+    if (!itemRows.length) {
+      await connection.rollback();
+      return res.status(404).json({ message: 'Item not found' });
+    }
+
+    const location = await allocatePutawayLocation(parsedItemId, parsedIsXl, connection);
+    if (!location) {
+      await connection.rollback();
+      return res.status(400).json({ message: 'No putaway location available' });
+    }
+
+    const [inventoryRows] = await connection.query(
+      `SELECT id, quantity
+       FROM inventory
+       WHERE item_id = ? AND location_id = ?
+       LIMIT 1
+       FOR UPDATE`,
+      [parsedItemId, location.id]
+    );
+
+    if (inventoryRows.length > 0) {
+      await connection.query(
+        `UPDATE inventory
+         SET quantity = COALESCE(quantity, 0) + ?
+         WHERE id = ?`,
+        [parsedQuantity, inventoryRows[0].id]
+      );
+    } else {
+      await connection.query(
+        `INSERT INTO inventory (item_id, location_id, quantity)
+         VALUES (?, ?, ?)`,
+        [parsedItemId, location.id, parsedQuantity]
+      );
+    }
+
+    await connection.query(
+      `UPDATE items
+       SET quantity = COALESCE(quantity, 0) + ?
+       WHERE id = ?`,
+      [parsedQuantity, parsedItemId]
+    );
+
+    await connection.commit();
+    return res.status(201).json({
+      itemId: parsedItemId,
+      quantity: parsedQuantity,
+      location_code: location.location_code,
+      location,
+    });
+  } catch (err) {
+    await connection.rollback();
+    console.error('❌ Error processing putaway:', err.message);
+    return res.status(500).json({ message: 'Database error' });
+  } finally {
+    connection.release();
+  }
+}
+
+app.get('/tasks/:id', authenticateJWT, handleGetTaskById);
+app.get('/api/tasks/:id', authenticateJWT, handleGetTaskById);
+app.post('/api/inbound/putaway', authenticateJWT, handleInboundPutaway);
 
 app.post('/tasks/:taskId/take', authenticateJWT, async (req, res) => {
   const parsedTaskId = Number.parseInt(req.params.taskId, 10);

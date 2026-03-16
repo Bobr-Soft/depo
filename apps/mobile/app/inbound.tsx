@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useRef, useEffect } from "react";
 import { Alert } from "react-native";
-import { YStack, XStack, Button, Text, H2, Card, ScrollView, Separator } from "@repo/ui";
-import { ScanBarcode, Package, ArrowLeft, RefreshCw, Trash2, Edit3, Save, CheckCircle2, AlertCircle } from "@tamagui/lucide-icons";
+import { YStack, XStack, Button, Text, H2, Card, ScrollView, Separator, Switch } from "@repo/ui";
+import { ScanBarcode, Package, ArrowLeft, RefreshCw, Trash2, Edit3, Save, CheckCircle2, AlertCircle, MapPin } from "@tamagui/lucide-icons";
 import { BarcodeScanner } from "@/components";
 import { router, useLocalSearchParams } from "expo-router";
 import { buildApiUrl, getApiUrl, getToken } from "@/services/secureStorage";
@@ -13,6 +13,9 @@ type ScannedInboundItem = {
   type: string;
   timestamp: Date;
   quantity: number;
+  isXl: boolean; // ÚJ: XL/Raklapos méret jelölése a lokációkiosztáshoz
+  assignedLocation?: string | null; // ÚJ: A backend által kiosztott cél polc
+  status: 'pending' | 'allocated' | 'error';
 };
 
 type SaveSummary = {
@@ -24,12 +27,7 @@ type SaveSummary = {
 
 type ApiItem = {
   id: number;
-  name: string;
   barcode: string | null;
-  description: string | null;
-  quantity: number;
-  category_id?: number | null;
-  location_id?: number | null;
 };
 
 const normalizeBarcode = (value: string) => value.trim().replace(/\s+/g, "").toLowerCase();
@@ -116,7 +114,8 @@ export default function InboundScreen() {
         updated[existingIndex] = { ...updated[existingIndex], quantity: updated[existingIndex].quantity + 1, timestamp };
         return updated;
       }
-      return [{ code: data, type, timestamp, quantity: 1 }, ...prev];
+      // Alapértelmezetten a beolvasott tétel pending státuszú és nem XL
+      return [{ code: data, type, timestamp, quantity: 1, isXl: false, status: 'pending' }, ...prev];
     });
 
     Alert.alert(
@@ -130,11 +129,21 @@ export default function InboundScreen() {
     );
   }, []);
 
+  const toggleXlStatus = (code: string) => {
+    setScannedItems((prev) =>
+      prev.map((item) => normalizeBarcode(item.code) === normalizeBarcode(code) ? { ...item, isXl: !item.isXl } : item)
+    );
+  };
+
   const fetchItems = useCallback(async (apiUrl: string, token: string): Promise<ApiItem[]> => {
     const response = await fetch(buildApiUrl(apiUrl, '/items'), {
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     });
-    if (!response.ok) throw new Error(`Nem sikerült lekérni a termékeket: ${response.status}`);
+
+    if (!response.ok) {
+      throw new Error(`Nem sikerült lekérni a termékeket: ${response.status}`);
+    }
+
     const payload = await response.json();
     return Array.isArray(payload) ? payload : [];
   }, []);
@@ -146,16 +155,18 @@ export default function InboundScreen() {
       quantityIncrement: item.quantity,
       name: `Beolvasott termék ${item.code}`,
       description: "Inbound scan",
+      isXl: item.isXl // Átadjuk az XL flaget is az offline sornak
     });
   }, []);
 
-  const saveScannedItems = useCallback(async () => {
+  const allocateAndSaveItems = useCallback(async () => {
     if (scannedItems.length === 0 || isSaving) return;
 
     setIsSaving(true);
     setSummary(null);
 
     const batchSummary: SaveSummary = { total: scannedItems.length, successful: 0, failed: 0, queued: 0 };
+    const updatedItemsList = [...scannedItems]; // Másolat, amiben a státuszokat frissítjük
 
     try {
       const [apiUrl, token, online] = await Promise.all([getApiUrl(), getToken(), isOnline()]);
@@ -169,71 +180,78 @@ export default function InboundScreen() {
         setScannedItems([]);
         setSummary(batchSummary);
         await loadPendingRetryCount();
-        Alert.alert("Offline mentés", "A tételek várólistára kerültek, és online állapotban szinkronizálódnak.");
+        Alert.alert("Offline mentés", "Nincs internetkapcsolat. A tételek a várólistára kerültek. Amint online leszel, a rendszer megkísérli lefoglalni a lokációkat.");
         return;
       }
 
+      // Végigmegyünk a listán és meghívjuk az új Putaway végpontot
       const items = await fetchItems(apiUrl, token);
-      const itemByBarcode = new Map<string, ApiItem>();
-      for (const item of items) if (item.barcode) itemByBarcode.set(normalizeBarcode(item.barcode), item);
+      const itemIdByBarcode = new Map<string, number>();
+      for (const knownItem of items) {
+        if (knownItem.barcode) {
+          itemIdByBarcode.set(normalizeBarcode(knownItem.barcode), knownItem.id);
+        }
+      }
 
-      for (const scannedItem of scannedItems) {
-        const normalizedBarcode = normalizeBarcode(scannedItem.code);
-        const existingItem = itemByBarcode.get(normalizedBarcode);
-
+      for (let i = 0; i < updatedItemsList.length; i++) {
+        const item = updatedItemsList[i];
         try {
-          if (existingItem) {
-            const updateResponse = await fetch(buildApiUrl(apiUrl, `/items/${existingItem.id}`), {
-              method: "PUT",
-              headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-              body: JSON.stringify({
-                name: existingItem.name,
-                barcode: existingItem.barcode ?? scannedItem.code,
-                description: existingItem.description,
-                quantity: Math.max(0, Number(existingItem.quantity || 0)) + scannedItem.quantity,
-                category_id: existingItem.category_id ?? null,
-                location_id: existingItem.location_id ?? null,
-              }),
-            });
-            if (!updateResponse.ok) throw new Error(`Update hiba: ${updateResponse.status}`);
-            itemByBarcode.set(normalizedBarcode, await updateResponse.json());
-          } else {
-            const createResponse = await fetch(buildApiUrl(apiUrl, '/items'), {
-              method: "POST",
-              headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-              body: JSON.stringify({
-                name: `Beolvasott termék ${scannedItem.code}`,
-                barcode: scannedItem.code,
-                description: "Inbound scan",
-                quantity: scannedItem.quantity,
-                category_id: null,
-                location_id: null,
-              }),
-            });
-            if (!createResponse.ok) throw new Error(`Create hiba: ${createResponse.status}`);
-            itemByBarcode.set(normalizedBarcode, await createResponse.json());
+          const itemId = itemIdByBarcode.get(normalizeBarcode(item.code));
+          if (!itemId) {
+            throw new Error(`Nincs egyezo termek azonosito a vonalkodhoz: ${item.code}`);
           }
+
+          const response = await fetch(buildApiUrl(apiUrl, '/api/inbound/putaway'), {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              itemId,
+              quantity: item.quantity,
+              isXl: item.isXl
+            }),
+          });
+
+          if (!response.ok) {
+            const errorText = await response.text().catch(() => "Ismeretlen hiba");
+            throw new Error(`Kiosztási hiba: ${response.status} - ${errorText}`);
+          }
+
+          const data = await response.json();
+
+          // Ha sikeres, frissítjük az elemet a kapott lokációval
+          updatedItemsList[i] = {
+            ...item,
+            status: 'allocated',
+            assignedLocation: data.location_code
+          };
           batchSummary.successful += 1;
         } catch (error) {
-          console.error(`Failed to persist scanned barcode ${scannedItem.code}:`, error);
+          console.error(`Failed to allocate location for ${item.code}:`, error);
+          updatedItemsList[i] = { ...item, status: 'error' };
           batchSummary.failed += 1;
-          await enqueueInboundRetry(scannedItem);
+          await enqueueInboundRetry(item);
           batchSummary.queued += 1;
         }
       }
 
-      setScannedItems([]);
       setSummary(batchSummary);
       await loadPendingRetryCount();
 
       if (batchSummary.failed > 0) {
-        Alert.alert("Részleges mentés", `Sikeres: ${batchSummary.successful}\nSikertelen: ${batchSummary.failed}\nVárólistára tett: ${batchSummary.queued}`);
+        // Ha van hiba, a listán hagyjuk azokat a tételeket, hogy a felhasználó lássa, mi nem kapott lokációt
+        setScannedItems(updatedItemsList);
+        Alert.alert("Részleges mentés", `Sikeres kiosztás: ${batchSummary.successful}\nSikertelen (pl. tele a raktár): ${batchSummary.failed}\nVárólistára tett: ${batchSummary.queued}`);
       } else {
-        Alert.alert("Mentés sikeres", `${batchSummary.successful} tétel mentve.`);
-        router.replace("/");
+        // Ha minden sikeres, frissítjük a UI-t, hogy lássa a lokációkat, de a "Mentés" gomb eltűnik (vagy lecserélődik)
+        setScannedItems(updatedItemsList);
+        Alert.alert(
+          "Lokációk lefoglalva",
+          `${batchSummary.successful} tételhez sikeresen kijelöltük a cél polcokat. Kérjük, vidd a tételeket a kijelölt helyekre.`,
+          [{ text: "Megértettem", style: "default" }]
+        );
       }
     } catch (error) {
-      console.error("Failed to save inbound scanned items:", error);
+      console.error("Failed to save and allocate items:", error);
       for (const item of scannedItems) {
         await enqueueInboundRetry(item);
         batchSummary.queued += 1;
@@ -242,7 +260,7 @@ export default function InboundScreen() {
       setScannedItems([]);
       setSummary(batchSummary);
       await loadPendingRetryCount();
-      Alert.alert("Mentési hiba", "A mentés nem sikerült, a tételek várólistára kerültek újrapróbáláshoz.");
+      Alert.alert("Mentési hiba", "A hálózati kérés megszakadt, a tételek várólistára kerültek újrapróbáláshoz.");
     } finally {
       setIsSaving(false);
     }
@@ -267,7 +285,7 @@ export default function InboundScreen() {
     if (scannedItems.length === 0) return;
     Alert.alert(
       "Lista törlése",
-      `Biztosan törlöd az összes beolvasott tételt? (${scannedItems.length} db)`,
+      `Biztosan törlöd a listát? (${scannedItems.length} db)`,
       [
         { text: "Mégse", style: "cancel" },
         { text: "Törlés", style: "destructive", onPress: () => { setScannedItems([]); setSummary(null); } },
@@ -288,6 +306,9 @@ export default function InboundScreen() {
     );
   }
 
+  // Ellenőrizzük, hogy van-e még olyan tétel, amihez nem kértek lokációt
+  const hasPendingItems = scannedItems.some(item => item.status === 'pending' || item.status === 'error');
+
   return (
     <YStack flex={1} backgroundColor="$background" paddingTop="$4">
 
@@ -297,13 +318,13 @@ export default function InboundScreen() {
           <Button size="$3" theme="gray" circular icon={ArrowLeft} onPress={() => router.back()} disabled={isSaving} />
           <YStack flex={1}>
             <H2 color="$color12">Bevételezés</H2>
-            <Text fontSize={14} color="$color10">Áru érkeztetése a raktárba</Text>
+            <Text fontSize={14} color="$color10">Áru érkeztetése és lokáció kiosztása</Text>
           </YStack>
         </XStack>
 
         {/* PRIMARY ACTION BUTTON */}
         <Button size="$5" theme="blue" icon={ScanBarcode} onPress={() => setShowScanner(true)} marginTop="$2">
-          <Text fontWeight="600" fontSize={16}>Termék szkennelése</Text>
+          <Text fontWeight="600" fontSize={16}>Új termék szkennelése</Text>
         </Button>
       </YStack>
 
@@ -330,7 +351,7 @@ export default function InboundScreen() {
               <YStack flex={1}>
                 <Text fontSize={14} fontWeight="600" color={summary.failed > 0 ? "$orange10" : "$green10"}>Mentés eredménye</Text>
                 <Text fontSize={12} color={summary.failed > 0 ? "$orange10" : "$green10"}>
-                  {summary.successful} sikeres, {summary.failed} hiba, {summary.queued} várólistán.
+                  {summary.successful} lefoglalva, {summary.failed} hiba, {summary.queued} offline.
                 </Text>
               </YStack>
             </XStack>
@@ -352,48 +373,74 @@ export default function InboundScreen() {
               </Button>
             </XStack>
 
-            {scannedItems.map((item, index) => (
-              <Card key={`${item.code}-${index}`} backgroundColor="$color3" borderRadius="$4" padding="$3" borderWidth={1} borderColor="$color4">
-                <XStack gap="$3" alignItems="center">
-                  <YStack width={48} height={48} backgroundColor="$blue5" borderRadius="$3" alignItems="center" justifyContent="center">
-                    <Package size={24} color="$blue10" />
-                  </YStack>
+            {scannedItems.map((item, index) => {
+              const isAllocated = item.status === 'allocated' && item.assignedLocation;
 
-                  <YStack flex={1} gap="$1">
-                    <Text fontWeight="700" fontSize={16} color="$color12">{item.code}</Text>
-                    <XStack gap="$3">
-                      <Text fontSize={13} fontWeight="600" color="$color11">Mennyiség: <Text color="$blue10">{item.quantity} db</Text></Text>
-                      <Text fontSize={13} color="$color10">Típus: {item.type}</Text>
-                    </XStack>
-                    <Text fontSize={12} color="$color9">{item.timestamp.toLocaleTimeString('hu-HU')}</Text>
-                  </YStack>
+              return (
+                <Card key={`${item.code}-${index}`} backgroundColor="$color3" borderRadius="$4" padding="$3" borderWidth={1} borderColor={isAllocated ? "$green5" : "$color4"}>
+                  <XStack gap="$3" alignItems="center">
+                    <YStack width={48} height={48} backgroundColor={isAllocated ? "$green5" : "$blue5"} borderRadius="$3" alignItems="center" justifyContent="center">
+                      <Package size={24} color={isAllocated ? "$green10" : "$blue10"} />
+                    </YStack>
 
-                  <Button
-                    size="$3"
-                    theme="gray"
-                    circular
-                    icon={Edit3}
-                    onPress={() => router.push({ pathname: "/edit", params: { code: item.code, type: "inbound", quantity: String(item.quantity) } })}
-                  />
-                </XStack>
-              </Card>
-            ))}
+                    <YStack flex={1} gap="$1">
+                      <Text fontWeight="700" fontSize={16} color="$color12">{item.code}</Text>
+                      <XStack gap="$3">
+                        <Text fontSize={13} fontWeight="600" color="$color11">Mennyiség: <Text color="$blue10">{item.quantity} db</Text></Text>
+                      </XStack>
+
+                      {/* Cél Lokáció UI (Ha már kiosztották) */}
+                      {isAllocated ? (
+                        <YStack backgroundColor="$green3" padding="$2" borderRadius="$3" marginTop="$1">
+                          <XStack alignItems="center" gap="$2">
+                            <MapPin size={16} color="$green10" />
+                            <Text fontSize={14} fontWeight="800" color="$green11">Cél polc: {item.assignedLocation}</Text>
+                          </XStack>
+                        </YStack>
+                      ) : (
+                        <XStack alignItems="center" justifyContent="space-between" marginTop="$1" backgroundColor="$color2" padding="$2" borderRadius="$3">
+                          <Text fontSize={13} color="$color11">XL Méret (Raklapos)?</Text>
+                          <Switch
+                            size="$2"
+                            checked={item.isXl}
+                            onCheckedChange={() => toggleXlStatus(item.code)}
+                            backgroundColor={item.isXl ? "$orange8" : "$color5"}
+                          >
+                            <Switch.Thumb animation="quick" />
+                          </Switch>
+                        </XStack>
+                      )}
+                    </YStack>
+
+                    {!isAllocated && (
+                      <Button
+                        size="$3"
+                        theme="gray"
+                        circular
+                        icon={Edit3}
+                        onPress={() => router.push({ pathname: "/edit", params: { code: item.code, type: "inbound", quantity: String(item.quantity) } })}
+                      />
+                    )}
+                  </XStack>
+                </Card>
+              );
+            })}
           </YStack>
         ) : (
           <YStack flex={1} justifyContent="center" alignItems="center" paddingVertical="$10" gap="$3">
             <ScanBarcode size={64} color="$color8" opacity={0.5} />
             <Text fontSize={15} color="$color10" textAlign="center" paddingHorizontal="$6">
-              Még nincsenek beolvasott tételek. Kezdd el a szkennelést a fenti kék gombbal.
+              Még nincsenek beolvasott tételek. Kezdd el a szkennelést a fenti gombbal.
             </Text>
           </YStack>
         )}
       </ScrollView>
 
       {/* FLOATING ACTION BOTTOM BAR */}
-      {scannedItems.length > 0 && (
+      {scannedItems.length > 0 && hasPendingItems && (
         <YStack position="absolute" bottom={0} left={0} right={0} padding="$4" backgroundColor="$background" borderTopWidth={1} borderColor="$color4">
-          <Button size="$5" theme="green" icon={Save} disabled={isSaving} onPress={saveScannedItems}>
-            <Text fontWeight="600" fontSize={16}>{isSaving ? "Mentés folyamatban..." : `Tételek mentése (${scannedItems.length})`}</Text>
+          <Button size="$5" theme="green" icon={Save} disabled={isSaving} onPress={allocateAndSaveItems}>
+            <Text fontWeight="600" fontSize={16}>{isSaving ? "Lefoglalás..." : `Lokációk kiosztása (${scannedItems.filter(i => i.status === 'pending' || i.status === 'error').length})`}</Text>
           </Button>
         </YStack>
       )}

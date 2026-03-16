@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useRef, useState, useMemo } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { Alert } from "react-native";
-import { useLocalSearchParams, router } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, router } from "expo-router";
 import { H2, Text, YStack, XStack, Button, Card, ScrollView, Spinner, Separator } from "@repo/ui";
-import { ArrowLeft, CheckCircle2, Package, Clock, Barcode, AlertCircle } from "@tamagui/lucide-icons";
+import { ArrowLeft, CheckCircle2, Package, Clock, Barcode, AlertCircle, MapPin, Lock } from "@tamagui/lucide-icons";
 import { loadTask } from "@/components/api";
 import { TaskComplete } from "@/constants";
 import { BarcodeScanner } from "@/components";
@@ -15,7 +15,6 @@ export default function PickingDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [task, setTask] = useState<TaskComplete | null>(null);
-  const [activeItem, setActiveItem] = useState<TaskComplete['items'][number] | null>(null);
   const [showScanner, setShowScanner] = useState(false);
   const [scannerKey, setScannerKey] = useState(0);
   const isProcessing = useRef(false);
@@ -37,40 +36,36 @@ export default function PickingDetailScreen() {
     }
   }, [id]);
 
-  useEffect(() => {
+  useFocusEffect(useCallback(() => {
     fetchTaskDetails();
-    setActiveItem(null);
-  }, [fetchTaskDetails]);
+  }, [fetchTaskDetails]));
 
-  // --- PROGRESSZIÓ SZÁMÍTÁSA ---
-  const { totalItems, pickedItems, progressPercent } = useMemo(() => {
-    if (!task?.items) return { totalItems: 0, pickedItems: 0, progressPercent: 0 };
-    const total = task.items.length;
-    const picked = task.items.filter(i => i.status === 'picked' || i.picked_quantity >= i.requested_quantity).length;
+  // --- IRÁNYÍTOTT MUNKAVÉGZÉS (DIRECTED WORK) LOGIKA ---
+  // A backend S-Shape algoritmus alapján rendezve küldi az adatokat.
+  // Az "activeItem" szigorúan az első olyan tétel, ami még nincs kész.
+  const { activeItem, upcomingItems, completedItems, progressPercent, totalItems, pickedItems } = useMemo(() => {
+    if (!task?.items) {
+      return { activeItem: null, upcomingItems: [], completedItems: [], progressPercent: 0, totalItems: 0, pickedItems: 0 };
+    }
+
+    const items = task.items;
+    const completed = items.filter(i => i.status === 'picked' || i.picked_quantity >= i.requested_quantity);
+    const pending = items.filter(i => i.status !== 'picked' && i.picked_quantity < i.requested_quantity);
+
     return {
-      totalItems: total,
-      pickedItems: picked,
-      progressPercent: total === 0 ? 0 : Math.round((picked / total) * 100)
+      activeItem: pending.length > 0 ? pending[0] : null,
+      upcomingItems: pending.slice(1),
+      completedItems: completed,
+      progressPercent: items.length === 0 ? 0 : Math.round((completed.length / items.length) * 100),
+      totalItems: items.length,
+      pickedItems: completed.length
     };
   }, [task]);
 
   // --- SZKENNELÉS LOGIKA ---
   const handleScan = useCallback((data: string, type: string) => {
-    if (isProcessing.current) return;
+    if (isProcessing.current || !activeItem) return;
     isProcessing.current = true;
-
-    if (!activeItem) {
-      Alert.alert(
-        "Sikertelen szkennelés",
-        `Nincs kiválasztott tétel.\nKód: ${data}`,
-        [
-          { text: "Újra szkennelés", onPress: () => { isProcessing.current = false; setScannerKey(prev => prev + 1); }, style: "default" },
-          { text: "Kész", onPress: () => { isProcessing.current = false; setShowScanner(false); setActiveItem(null); setScannerKey(prev => prev + 1); }, style: "cancel" }
-        ],
-        { cancelable: false, onDismiss: () => { isProcessing.current = false; } }
-      );
-      return;
-    }
 
     const barcode = activeItem.item.barcode ?? '';
     const normalizedData = normalizeBarcode(data);
@@ -90,7 +85,6 @@ export default function PickingDetailScreen() {
                 await taskItemPicked(matchedItem.task_id, matchedItem.item.id, matchedItem.requested_quantity);
                 await fetchTaskDetails();
                 setShowScanner(false);
-                setActiveItem(null);
                 setScannerKey(prev => prev + 1);
               } catch (pickError) {
                 Alert.alert(
@@ -114,7 +108,7 @@ export default function PickingDetailScreen() {
         `A beolvasott termék téves.\nKód: ${data}\nVárt vonalkód: ${barcode || 'N/A'}`,
         [
           { text: "Újra szkennelés", onPress: () => { isProcessing.current = false; setScannerKey(prev => prev + 1); }, style: "default" },
-          { text: "Kész", onPress: () => { isProcessing.current = false; setShowScanner(false); setActiveItem(null); setScannerKey(prev => prev + 1); }, style: "cancel" }
+          { text: "Kész", onPress: () => { isProcessing.current = false; setShowScanner(false); setScannerKey(prev => prev + 1); }, style: "cancel" }
         ],
         { cancelable: false, onDismiss: () => { isProcessing.current = false; } }
       );
@@ -122,11 +116,7 @@ export default function PickingDetailScreen() {
   }, [activeItem, fetchTaskDetails]);
 
   // --- SZKENNER NÉZET ---
-  if (showScanner) {
-    if (!activeItem) {
-      Alert.alert("Hiba", "Nincs kiválasztott tétel a szkenneléshez.", [{ text: "OK", onPress: () => { setShowScanner(false); setScannerKey(prev => prev + 1); }, style: "default" }], { cancelable: false });
-      return null;
-    }
+  if (showScanner && activeItem) {
     if (activeItem.requested_quantity - activeItem.picked_quantity <= 0) {
       router.replace(`/picking/${id}/edit?item_id=${activeItem.id}`);
       return null;
@@ -136,9 +126,9 @@ export default function PickingDetailScreen() {
       <BarcodeScanner
         key={scannerKey}
         onScan={handleScan}
-        onClose={() => { isProcessing.current = false; setShowScanner(false); setActiveItem(null); setScannerKey(prev => prev + 1); }}
+        onClose={() => { isProcessing.current = false; setShowScanner(false); setScannerKey(prev => prev + 1); }}
         title="Termék szkennelés"
-        instruction={`Keresd ezt: ${activeItem.item.name}`}
+        instruction={`Keresd ezt: ${activeItem.item.name} (Polc: ${activeItem.location?.location_code ?? 'Ismeretlen'})`}
         autoResetDelay={0}
       />
     );
@@ -194,72 +184,96 @@ export default function PickingDetailScreen() {
             <Button size="$3" theme="gray" onPress={() => router.back()}>Vissza</Button>
           </YStack>
         ) : task?.items && task.items.length > 0 ? (
-          <YStack gap="$3">
-            {task.items.map((item) => {
-              const isCompleted = item.status === 'picked' || item.picked_quantity >= item.requested_quantity;
+          <YStack gap="$4">
 
-              return (
-                <Card
-                  key={`${item.task_id}-${item.id}`}
-                  backgroundColor={isCompleted ? "$green3" : "$color3"}
-                  borderWidth={1}
-                  borderColor={isCompleted ? "$green8" : "$color4"}
-                  borderRadius="$4"
-                  padding="$4"
-                  onPress={() => {
-                    if (isCompleted) {
-                      router.push(`/picking/${id}/edit?item_id=${item.id}`);
-                      return;
-                    }
-                    setActiveItem(item);
-                    setShowScanner(true);
-                  }}
-                  pressStyle={{ scale: 0.98, opacity: 0.8 }}
-                >
-                  <XStack gap="$3" alignItems="center">
-
-                    {/* Bal oldali státusz ikon */}
-                    <YStack
-                      width={48}
-                      height={48}
-                      backgroundColor={isCompleted ? "$green5" : "$color5"}
-                      borderRadius="$3"
-                      alignItems="center"
-                      justifyContent="center"
-                    >
-                      {isCompleted ? <CheckCircle2 size={24} color="$green10" /> : <Package size={24} color="$color11" />}
-                    </YStack>
-
-                    {/* Középső adatok */}
-                    <YStack flex={1} gap="$1.5">
-                      <Text fontWeight="700" fontSize={16} color={isCompleted ? "$color11" : "$color12"}>
-                        {item.item.name}
-                      </Text>
-
-                      <XStack gap="$3" flexWrap="wrap">
-                        <XStack gap="$1" alignItems="center">
-                          <Package size={12} color={isCompleted ? "$green10" : "$color10"} />
-                          <Text fontSize={13} fontWeight="600" color={isCompleted ? "$green10" : "$color11"}>
-                            {item.requested_quantity} db kért
-                          </Text>
+            {/* 1. AKTÍV TÉTEL (Ezt kell most csinálni) */}
+            {activeItem && (
+              <YStack gap="$2">
+                <Text fontSize={14} fontWeight="700" color="$blue10" textTransform="uppercase">Soron következő tétel</Text>
+                <Card backgroundColor="$blue2" borderWidth={2} borderColor="$blue8" borderRadius="$4" padding="$4">
+                  <YStack gap="$3">
+                    <XStack justifyContent="space-between" alignItems="flex-start">
+                      <YStack flex={1} gap="$1">
+                        <Text fontWeight="800" fontSize={22} color="$blue12">{activeItem.item.name}</Text>
+                        <XStack alignItems="center" gap="$1.5" marginTop="$1">
+                          <MapPin size={18} color="$blue10" />
+                          {/* Jelenleg a backend nem küldi, de így fel van készítve a location_code-ra */}
+                          <Text fontSize={16} fontWeight="700" color="$blue10">Lokáció: {activeItem.location?.location_code ?? 'Ismeretlen polc'}</Text>
                         </XStack>
-                        <XStack gap="$1" alignItems="center">
-                          <Barcode size={12} color="$color10" />
-                          <Text fontSize={13} color="$color10">
-                            {item.item.barcode ?? 'Nincs vonalkód'}
-                          </Text>
-                        </XStack>
-                      </XStack>
+                      </YStack>
+                    </XStack>
 
-                      <Text fontSize={12} color={isCompleted ? "$green10" : "$color9"} marginTop="$1">
-                        {isCompleted ? 'Teljesítve • Érintsd meg a módosításhoz' : 'Folyamatban • Érintsd meg a szkenneléshez'}
-                      </Text>
-                    </YStack>
+                    <XStack gap="$4" backgroundColor="$blue3" padding="$3" borderRadius="$3">
+                      <YStack flex={1}>
+                        <Text fontSize={12} color="$blue11" textTransform="uppercase">Szedendő</Text>
+                        <Text fontSize={20} fontWeight="800" color="$blue11">{activeItem.requested_quantity} db</Text>
+                      </YStack>
+                      <YStack flex={1}>
+                        <Text fontSize={12} color="$blue11" textTransform="uppercase">Vonalkód</Text>
+                        <Text fontSize={16} fontWeight="600" color="$blue11">{activeItem.item.barcode ?? 'N/A'}</Text>
+                      </YStack>
+                    </XStack>
 
-                  </XStack>
+                    <XStack gap="$2" marginTop="$2">
+                      <Button flex={1} size="$4" theme="blue" icon={Barcode} onPress={() => setShowScanner(true)}>
+                        Szkennelés
+                      </Button>
+                      <Button size="$4" theme="red" variant="outlined" onPress={() => router.push(`/picking/${id}/edit?item_id=${activeItem.id}`)}>
+                        Hiány
+                      </Button>
+                    </XStack>
+                  </YStack>
                 </Card>
-              );
-            })}
+              </YStack>
+            )}
+
+            {/* 2. ZÁROLT / VÁRAKOZÓ TÉTELEK (S-Shape útvonal szerint a következők) */}
+            {upcomingItems.length > 0 && (
+              <YStack gap="$2" marginTop="$4">
+                <Text fontSize={14} fontWeight="600" color="$color10" textTransform="uppercase">Következő a sorban</Text>
+                {upcomingItems.map((item) => (
+                  <Card key={item.id} backgroundColor="$color2" borderWidth={1} borderColor="$color4" borderRadius="$4" padding="$3" opacity={0.6}>
+                    <XStack gap="$3" alignItems="center">
+                      <Lock size={20} color="$color9" />
+                      <YStack flex={1}>
+                        <Text fontWeight="600" fontSize={15} color="$color11">{item.item.name}</Text>
+                        <Text fontSize={13} color="$color10">
+                          Lokáció: {item.location?.location_code ?? 'N/A'} • Mennyiség: {item.requested_quantity} db
+                        </Text>
+                      </YStack>
+                    </XStack>
+                  </Card>
+                ))}
+              </YStack>
+            )}
+
+            {/* 3. TELJESÍTETT TÉTELEK */}
+            {completedItems.length > 0 && (
+              <YStack gap="$2" marginTop="$4">
+                <Text fontSize={14} fontWeight="600" color="$green10" textTransform="uppercase">Teljesítve</Text>
+                {completedItems.map((item) => (
+                  <Card
+                    key={item.id}
+                    backgroundColor="$green2"
+                    borderWidth={1}
+                    borderColor="$green5"
+                    borderRadius="$4"
+                    padding="$3"
+                    onPress={() => router.push(`/picking/${id}/edit?item_id=${item.id}`)}
+                    pressStyle={{ opacity: 0.8 }}
+                  >
+                    <XStack gap="$3" alignItems="center">
+                      <CheckCircle2 size={20} color="$green10" />
+                      <YStack flex={1}>
+                        <Text fontWeight="600" fontSize={15} color="$green11" textDecorationLine="line-through">{item.item.name}</Text>
+                        <Text fontSize={13} color="$green10">{item.picked_quantity} db kiszedve</Text>
+                      </YStack>
+                    </XStack>
+                  </Card>
+                ))}
+              </YStack>
+            )}
+
           </YStack>
         ) : (
           <YStack flex={1} justifyContent="center" alignItems="center" paddingVertical="$10">

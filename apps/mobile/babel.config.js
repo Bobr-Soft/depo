@@ -1,18 +1,22 @@
 module.exports = function (api) {
-  api.cache(true);
+  api.cache.using(() => process.env.NODE_ENV);
+  const isTest = process.env.NODE_ENV === 'test';
+
   return {
     presets: [
       "babel-preset-expo",
     ],
-    plugins: [
-      [
-        "@tamagui/babel-plugin",
-        {
-          components: ["tamagui"],
-          config: "../../packages/ui/tamagui.config.ts",
-          logTimings: true,
-        },
-      ],
-    ],
+    plugins: isTest
+      ? []
+      : [
+          [
+            "@tamagui/babel-plugin",
+            {
+              components: ["tamagui"],
+              config: "../../packages/ui/tamagui.config.ts",
+              logTimings: true,
+            },
+          ],
+        ],
   };
 };
