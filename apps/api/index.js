@@ -43,9 +43,17 @@ app.use(express.json());
 
 // Accept both /endpoint and /api/endpoint request shapes.
 app.use((req, _res, next) => {
-  if (req.url === '/api' || req.url.startsWith('/api?')) {
+  const pathOnly = req.url.split('?')[0];
+
+  // Keep explicit /api routes intact; they are already declared with /api.
+  const keepApiPrefix =
+    pathOnly === '/api/inbound/putaway'
+    || /^\/api\/tasks\/[^/]+$/.test(pathOnly)
+    || /^\/api\/tasks\/[^/]+\/items\/[^/]+\/exception$/.test(pathOnly);
+
+  if (!keepApiPrefix && (req.url === '/api' || req.url.startsWith('/api?'))) {
     req.url = req.url.replace('/api', '/');
-  } else if (req.url.startsWith('/api/')) {
+  } else if (!keepApiPrefix && req.url.startsWith('/api/')) {
     req.url = req.url.slice(4);
   }
 
