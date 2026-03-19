@@ -1,6 +1,3 @@
-# API Deployment Workflow
-# Deploys the Express API to production
-
 name: Deploy API
 
 on:
@@ -16,7 +13,7 @@ env:
 
 jobs:
   # ============================================
-  # Test API
+  # Test API (Runs on GitHub Cloud)
   # ============================================
   test:
     name: 🧪 Test API
@@ -26,7 +23,6 @@ jobs:
       mysql:
         image: mysql:8.0
         env:
-          # Ephemeral CI-only container — not a production credential
           MYSQL_ROOT_PASSWORD: ${{ secrets.CI_TEST_DB_PASSWORD }}
           MYSQL_DATABASE: depo_test
         ports:
@@ -56,7 +52,7 @@ jobs:
         working-directory: apps/api
         run: yarn test
         env:
-          DB_HOST: localhost
+          DB_HOST: 127.0.0.1
           DB_PORT: 3306
           DB_USER: root
           DB_PASSWORD: ${{ secrets.CI_TEST_DB_PASSWORD }}
@@ -64,15 +60,20 @@ jobs:
           JWT_SECRET: ${{ secrets.CI_TEST_JWT_SECRET }}
 
   # ============================================
-  # Deploy API
+  # Deploy API (Runs on Private Proxmox LXC)
   # ============================================
   deploy:
-    name: 🚀 Deploy API
-    runs-on: ubuntu-latest
+    name: 🚀 Deploy API (Self-Hosted)
+    runs-on: self-hosted
     needs: test
     if: github.ref == 'refs/heads/main'
 
     steps:
+      - name: Clean Workspace
+        run: |
+          rm -rf ${{ github.workspace }}/* || true
+          rm -rf ${{ github.workspace }}/.* || true
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -87,26 +88,20 @@ jobs:
       - name: Install dependencies
         run: yarn install --immutable
 
-      # Uncomment and configure for your hosting provider
-      # Example: Deploy to Railway
-      # - name: Deploy to Railway
-      #   uses: bervProject/railway-deploy@v1.0.0
-      #   with:
-      #     railway_token: ${{ secrets.RAILWAY_TOKEN }}
-      #     service: api
+      - name: Inject Production Configurations
+        working-directory: apps/api
+        run: |
+          cp /opt/depo-config/api/.env .env
+          chmod 600 .env
 
-      # Example: Deploy to Render
-      # - name: Deploy to Render
-      #   run: |
-      #     curl -X POST ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+      - name: Deploy API with PM2
+        working-directory: apps/api
+        run: |
+          yarn dlx pm2 describe depo-api > /dev/null 2>&1 \
+            && yarn dlx pm2 restart depo-api --update-env \
+            || yarn dlx pm2 start index.js --name depo-api --update-env
+          yarn dlx pm2 save --force
 
-      # Example: Deploy to Azure App Service
-      # - name: Deploy to Azure Web App
-      #   uses: azure/webapps-deploy@v2
-      #   with:
-      #     app-name: ${{ secrets.AZURE_WEBAPP_NAME }}
-      #     publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
-      #     package: apps/api
-
-      - name: Deployment complete
-        run: echo "✅ API deployed successfully!"
+      - name: Show PM2 process status
+        run: |
+          yarn dlx pm2 status

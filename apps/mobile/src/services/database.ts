@@ -151,6 +151,37 @@ function getDb(): SQLite.SQLiteDatabase {
 // TASKS OPERATIONS
 // ============================================================
 
+function resolveTaskStatusForLocalStore(task: TaskComplete): string {
+  const rawStatus = String(task.status || '').trim().toLowerCase();
+
+  if (rawStatus === 'cancelled') {
+    return 'cancelled';
+  }
+
+  const normalizedStatus = rawStatus === 'done' || rawStatus === 'delivered'
+    ? 'completed'
+    : rawStatus;
+
+  if (!Array.isArray(task.items) || task.items.length === 0) {
+    return normalizedStatus || 'pending';
+  }
+
+  const allItemsPicked = task.items.every(
+    (item) => item.status === 'picked' || item.picked_quantity >= item.requested_quantity
+  );
+
+  if (allItemsPicked) {
+    return 'completed';
+  }
+
+  const hasAnyProgress = task.items.some((item) => item.picked_quantity > 0);
+  if (hasAnyProgress && normalizedStatus === 'pending') {
+    return 'in_progress';
+  }
+
+  return normalizedStatus || 'pending';
+}
+
 /**
  * Save tasks to local database
  */
@@ -160,6 +191,8 @@ export async function saveTasks(tasks: TaskComplete[]): Promise<void> {
   try {
     await database.withTransactionAsync(async () => {
       for (const task of tasks) {
+        const taskStatus = resolveTaskStatusForLocalStore(task);
+
         // Insert or replace task
         await database.runAsync(
           `INSERT OR REPLACE INTO tasks
@@ -171,7 +204,7 @@ export async function saveTasks(tasks: TaskComplete[]): Promise<void> {
             task.type,
             task.source_id,
             task.assigned_user,
-            task.status,
+            taskStatus,
             task.priority,
             task.deadline ? new Date(task.deadline).getTime() : null,
             new Date(task.updated_at).getTime(),
@@ -416,7 +449,9 @@ export async function getTaskById(id: number): Promise<TaskComplete | null> {
 }
 
 /**
- * Update task status locally and queue for sync
+ * Update task status locally.
+ * Task-level status mutations do not have a direct API sync path yet,
+ * so unsupported `task` queue entries must not be created here.
  */
 export async function updateTaskStatus(
   taskId: number,
@@ -425,28 +460,39 @@ export async function updateTaskStatus(
   const database = getDb();
 
   try {
-    await database.withTransactionAsync(async () => {
-      await database.runAsync(
-        'UPDATE tasks SET status = ?, synced = 0, updated_at = ? WHERE id = ?',
-        [status, Date.now(), taskId]
-      );
-
-      await database.runAsync(
-        `INSERT INTO sync_queue (operation, entity_type, entity_id, payload, created_at)
-         VALUES (?, ?, ?, ?, ?)`,
-        [
-          'UPDATE',
-          'task',
-          taskId,
-          JSON.stringify({ status }),
-          Date.now(),
-        ]
-      );
-    });
+    await database.runAsync(
+      'UPDATE tasks SET status = ?, synced = 1, updated_at = ? WHERE id = ?',
+      [status, Date.now(), taskId]
+    );
   } catch (error) {
     console.error('Failed to update task status:', error);
     throw error;
   }
+}
+
+async function recomputeAndPersistTaskStatus(
+  database: SQLite.SQLiteDatabase,
+  taskId: number,
+  updatedAt: number
+): Promise<string> {
+  const taskProgress = await database.getFirstAsync<any>(
+    `SELECT COUNT(*) AS total_items,
+            SUM(CASE WHEN status = 'picked' THEN 1 ELSE 0 END) AS picked_items
+     FROM task_items
+     WHERE task_id = ?`,
+    [taskId]
+  );
+
+  const totalItems = taskProgress?.total_items ?? 0;
+  const pickedItems = taskProgress?.picked_items ?? 0;
+  const nextTaskStatus = totalItems > 0 && pickedItems === totalItems ? 'completed' : 'in_progress';
+
+  await database.runAsync(
+    'UPDATE tasks SET status = ?, synced = 0, updated_at = ? WHERE id = ?',
+    [nextTaskStatus, updatedAt, taskId]
+  );
+
+  return nextTaskStatus;
 }
 
 /**
@@ -460,9 +506,24 @@ export async function updateTaskItemQuantity(
 
   try {
     await database.withTransactionAsync(async () => {
+      const taskItem = await database.getFirstAsync<any>(
+        `SELECT id, task_id, requested_quantity
+         FROM task_items
+         WHERE id = ?
+         LIMIT 1`,
+        [taskItemId]
+      );
+
+      if (!taskItem) {
+        throw new Error(`Task item not found for taskItemId=${taskItemId}`);
+      }
+
+      const itemStatus = pickedQuantity >= taskItem.requested_quantity ? 'picked' : 'pending';
+      const now = Date.now();
+
       await database.runAsync(
-        'UPDATE task_items SET picked_quantity = ?, synced = 0 WHERE id = ?',
-        [pickedQuantity, taskItemId]
+        'UPDATE task_items SET picked_quantity = ?, status = ?, synced = 0 WHERE id = ?',
+        [pickedQuantity, itemStatus, taskItemId]
       );
 
       await database.runAsync(
@@ -472,10 +533,12 @@ export async function updateTaskItemQuantity(
           'UPDATE',
           'task_item',
           taskItemId,
-          JSON.stringify({ picked_quantity: pickedQuantity }),
-          Date.now(),
+          JSON.stringify({ picked_quantity: pickedQuantity, status: itemStatus }),
+          now,
         ]
       );
+
+      await recomputeAndPersistTaskStatus(database, taskItem.task_id, now);
     });
   } catch (error) {
     console.error('Failed to update task item quantity:', error);
@@ -748,28 +811,7 @@ export async function markItemAsPicked(
         ]
       );
 
-      const taskProgress = await database.getFirstAsync<any>(
-        `SELECT COUNT(*) AS total_items,
-                SUM(CASE WHEN status = 'picked' THEN 1 ELSE 0 END) AS picked_items
-         FROM task_items
-         WHERE task_id = ?`,
-        [taskId]
-      );
-
-      const totalItems = taskProgress?.total_items ?? 0;
-      const pickedItems = taskProgress?.picked_items ?? 0;
-      const nextTaskStatus = totalItems > 0 && pickedItems === totalItems ? 'completed' : 'in_progress';
-
-      await database.runAsync(
-        'UPDATE tasks SET status = ?, synced = 0, updated_at = ? WHERE id = ?',
-        [nextTaskStatus, now, taskId]
-      );
-
-      await database.runAsync(
-        `INSERT INTO sync_queue (operation, entity_type, entity_id, payload, created_at)
-         VALUES (?, ?, ?, ?, ?)`,
-        ['UPDATE', 'task', taskId, JSON.stringify({ status: nextTaskStatus }), now]
-      );
+      await recomputeAndPersistTaskStatus(database, taskId, now);
     });
   } catch (error) {
     console.error('Failed to mark item as picked:', error);

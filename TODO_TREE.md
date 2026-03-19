@@ -17,16 +17,17 @@
   - [ ] TODO: After successful `taskItemPicked`, force server refresh for that task (or optimistic local recompute)
   - [x] TODO: Ensure task status transitions to `completed` immediately in UI when last item is picked — `markItemAsPicked` in `database.ts` recomputes and persists task status
 
-- [ ] TODO[P0][MOBILE]: Fix completed-item edit path to keep task lifecycle consistent
-  - [ ] BUG: `updateTaskItemQuantity()` updates only `task_items`, not local `tasks.status`
-  - [ ] TODO: Recompute and update task status locally after edit (same logic as `markItemAsPicked`)
-  - [ ] TODO: Trigger sync + refresh after edit save so task list/detail remain consistent
+- [x] TODO[P0][MOBILE]: Fix completed-item edit path to keep task lifecycle consistent
+  - [x] BUG: `updateTaskItemQuantity()` updates only `task_items`, not local `tasks.status`
+  - [x] TODO: Recompute and update task status locally after edit (same logic as `markItemAsPicked`)
+  - [x] TODO: Trigger sync + refresh after edit save so task list/detail remain consistent
 
-- [ ] TODO[P1][MOBILE]: Align task list behavior across screens
-  - [ ] TODO: Apply same status grouping/sorting logic in `app/picking/index.tsx` as `app/(tabs)/items.tsx`
-  - [ ] TODO: Confirm completed tasks visibility/filter policy is explicit and consistent
+- [x] TODO[P1][MOBILE]: Align task list behavior across screens
+  - [x] TODO: Apply same status grouping/sorting logic in `app/picking/index.tsx` as `app/(tabs)/items.tsx`
+  - [x] TODO: Confirm completed tasks visibility/filter policy is explicit and consistent
 
 - [ ] TODO[P1][MOBILE]: Implement `app/picking/new.tsx` end-to-end
+  - [ ] NOTE: Current screen already supports taking unassigned tasks; remaining gap is real task creation or route/UX clarification
   - [ ] TODO: Add form fields (name/source/priority/deadline/items)
   - [ ] TODO: Wire create-task API call with validation and user feedback
   - [ ] TODO: Add offline fallback behavior for task creation
@@ -37,8 +38,8 @@
   - [ ] TODO: Save updates through API + sync queue
 
 - [ ] TODO[P2][MOBILE]: Tighten sync queue semantics in `src/services/sync.ts`
-  - [ ] FIXME: Queue currently drops unsupported entity operations (`task`) silently
-  - [ ] TODO: Add explicit handlers or prevent enqueueing unsupported operation types
+  - [x] FIXME: Local task-status updates no longer enqueue unsupported `task` operations
+  - [x] TODO: Add explicit handlers or prevent enqueueing unsupported operation types
   - [ ] TODO: Add dead-letter handling for repeatedly failing queue items
 
 - [ ] TODO[P2][MOBILE]: Data mapping cleanup

@@ -5,7 +5,6 @@ import { logout, reauthenticateSilently } from '@/services/auth';
 
 const DEV_BYPASS_TOKEN = 'dev-bypass-token';
 
-/** Placeholder tasks used when running with the dev bypass (no real API needed). */
 const DEV_MOCK_TASKS: TaskComplete[] = [
   {
     id: 1,
@@ -23,11 +22,6 @@ const DEV_MOCK_TASKS: TaskComplete[] = [
   } as unknown as TaskComplete,
 ];
 
-/**
- * Fetches all tasks with offline support.
- * Returns cached data immediately and syncs in background if online.
- * Falls back to mock data when the dev-bypass token is active.
- */
 export default async function loadTasks(): Promise<TaskComplete[]> {
   try {
     const token = await getToken();
@@ -37,13 +31,10 @@ export default async function loadTasks(): Promise<TaskComplete[]> {
       return [];
     }
 
-    // Dev bypass — return mock data so the screen works without the API
     if (token === DEV_BYPASS_TOKEN) {
-      console.warn('loadTasks: using dev bypass mock data');
       return DEV_MOCK_TASKS;
     }
 
-    // Use sync service for offline-first approach
     const { tasks } = await getTasksWithSync();
     return tasks;
   } catch (error) {
@@ -51,9 +42,6 @@ export default async function loadTasks(): Promise<TaskComplete[]> {
     return [];
   }
 }
-
-/** Loads a single task by ID. Uses loadTasks under the hood, so it benefits from caching and dev bypass.
- */
 
 export async function loadTask(id: number): Promise<TaskComplete | null> {
   try {
@@ -70,9 +58,6 @@ export async function loadTask(id: number): Promise<TaskComplete | null> {
   }
 }
 
-/**
- * Force refresh tasks from server
- */
 export async function refreshTasks(): Promise<TaskComplete[]> {
   try {
     const token = await getToken();
@@ -98,13 +83,12 @@ export async function markTaskItemAsPicked(taskId: number, itemId: number, picke
   try {
     const token = await getToken();
 
-    if(!token) {
+    if (!token) {
       console.warn('markTaskItemAsPicked: no auth token in secure storage');
       return false;
     }
 
     if (token === DEV_BYPASS_TOKEN) {
-      console.warn('markTaskItemAsPicked: dev bypass - simulating successful API call');
       return true;
     }
 
@@ -128,7 +112,6 @@ async function mutateTaskAssignment(taskId: number, action: 'take' | 'release'):
     }
 
     if (token === DEV_BYPASS_TOKEN) {
-      console.warn(`${action}Task: dev bypass - simulating success`);
       return true;
     }
 
@@ -144,8 +127,6 @@ async function mutateTaskAssignment(taskId: number, action: 'take' | 'release'):
       if (response.ok) {
         return true;
       }
-
-      const errorText = await response.text().catch(() => 'Unknown error');
 
       if ((response.status === 401 || response.status === 403) && !retriedWithReauth) {
         const reauthResult = await reauthenticateSilently();
@@ -165,6 +146,7 @@ async function mutateTaskAssignment(taskId: number, action: 'take' | 'release'):
         continue;
       }
 
+      const errorText = await response.text().catch(() => 'Unknown error');
       console.error(`${action}Task failed:`, response.status, errorText);
       return false;
     }
@@ -182,4 +164,66 @@ export async function takeTask(taskId: number): Promise<boolean> {
 
 export async function releaseTask(taskId: number): Promise<boolean> {
   return mutateTaskAssignment(taskId, 'release');
+}
+
+/**
+ * Requests a putaway location allocation from the backend.
+ * Automatically handles token refresh loops.
+ */
+export async function allocatePutaway(barcode: string, quantity: number, isXl: boolean): Promise<string | null> {
+  try {
+    const [storedToken, apiUrl] = await Promise.all([getToken(), getApiUrl()]);
+    let token = storedToken;
+    let retriedWithReauth = false;
+
+    if (!token || !apiUrl) {
+      throw new Error('Missing auth token or API URL');
+    }
+
+    if (token === DEV_BYPASS_TOKEN) {
+      return "01-01-01"; // Mock location
+    }
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const response = await fetch(buildApiUrl(apiUrl, '/inbound/putaway'), {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ barcode, quantity, isXl }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        return data.location_code;
+      }
+
+      if ((response.status === 401 || response.status === 403) && !retriedWithReauth) {
+        const reauthResult = await reauthenticateSilently();
+        if (!reauthResult.success) {
+          await logout();
+          throw new Error('Authentication failed');
+        }
+
+        const refreshedToken = reauthResult.token ?? await getToken();
+        if (!refreshedToken) {
+          await logout();
+          throw new Error('Failed to retrieve token after reauth');
+        }
+
+        token = refreshedToken;
+        retriedWithReauth = true;
+        continue;
+      }
+
+      const errorText = await response.text().catch(() => 'Unknown error');
+      throw new Error(`Allocation failed: ${response.status} - ${errorText}`);
+    }
+
+    return null;
+  } catch (error) {
+    console.error('Failed to allocate putaway location:', error);
+    throw error;
+  }
 }

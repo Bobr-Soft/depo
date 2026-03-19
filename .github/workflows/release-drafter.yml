@@ -3,8 +3,10 @@ name: Build and Release
 on:
   push:
     branches: [main, dev]
-  pull_request:
-    types: [opened, reopened, synchronize]
+    paths:
+      - 'apps/mobile/**'
+      - 'packages/ui/**'
+      - '.github/workflows/release-drafter.yml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

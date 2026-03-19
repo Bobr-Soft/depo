@@ -63,7 +63,7 @@ export default function OverviewPage() {
   const [items, setItems] = useState<Item[]>([]);
   const [categories, setCategories] = useState<{id: number; name: string}[]>([]);
   const [locations, setLocations] = useState<{id: number; name: string}[]>([]);
-  
+
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
@@ -146,10 +146,10 @@ export default function OverviewPage() {
       {/* Stats Cards */}
       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3, mb: 4 }}>
         <Box sx={{ flex: { xs: '1 1 100%', sm: '1 1 calc(50% - 12px)', md: '1 1 calc(33.333% - 16px)', lg: '1 1 calc(16.666% - 20px)' } }}>
-          <Paper 
+          <Paper
             elevation={2}
-            sx={{ 
-              p: 2.5, 
+            sx={{
+              p: 2.5,
               height: '100%',
               transition: 'transform 0.2s, box-shadow 0.2s',
               '&:hover': {
@@ -173,10 +173,10 @@ export default function OverviewPage() {
         </Box>
 
         <Box sx={{ flex: { xs: '1 1 100%', sm: '1 1 calc(50% - 12px)', md: '1 1 calc(33.333% - 16px)', lg: '1 1 calc(16.666% - 20px)' } }}>
-          <Paper 
+          <Paper
             elevation={2}
-            sx={{ 
-              p: 2.5, 
+            sx={{
+              p: 2.5,
               height: '100%',
               transition: 'transform 0.2s, box-shadow 0.2s',
               '&:hover': {
@@ -200,10 +200,10 @@ export default function OverviewPage() {
         </Box>
 
         <Box sx={{ flex: { xs: '1 1 100%', sm: '1 1 calc(50% - 12px)', md: '1 1 calc(33.333% - 16px)', lg: '1 1 calc(16.666% - 20px)' } }}>
-          <Paper 
+          <Paper
             elevation={2}
-            sx={{ 
-              p: 2.5, 
+            sx={{
+              p: 2.5,
               height: '100%',
               transition: 'transform 0.2s, box-shadow 0.2s',
               '&:hover': {
@@ -227,10 +227,10 @@ export default function OverviewPage() {
         </Box>
 
         <Box sx={{ flex: { xs: '1 1 100%', sm: '1 1 calc(50% - 12px)', md: '1 1 calc(33.333% - 16px)', lg: '1 1 calc(16.666% - 20px)' } }}>
-          <Paper 
+          <Paper
             elevation={2}
-            sx={{ 
-              p: 2.5, 
+            sx={{
+              p: 2.5,
               height: '100%',
               transition: 'transform 0.2s, box-shadow 0.2s',
               '&:hover': {
@@ -254,10 +254,10 @@ export default function OverviewPage() {
         </Box>
 
         <Box sx={{ flex: { xs: '1 1 100%', sm: '1 1 calc(50% - 12px)', md: '1 1 calc(33.333% - 16px)', lg: '1 1 calc(16.666% - 20px)' } }}>
-          <Paper 
+          <Paper
             elevation={2}
-            sx={{ 
-              p: 2.5, 
+            sx={{
+              p: 2.5,
               height: '100%',
               transition: 'transform 0.2s, box-shadow 0.2s',
               '&:hover': {
@@ -281,10 +281,10 @@ export default function OverviewPage() {
         </Box>
 
         <Box sx={{ flex: { xs: '1 1 100%', sm: '1 1 calc(50% - 12px)', md: '1 1 calc(33.333% - 16px)', lg: '1 1 calc(16.666% - 20px)' } }}>
-          <Paper 
+          <Paper
             elevation={2}
-            sx={{ 
-              p: 2.5, 
+            sx={{
+              p: 2.5,
               height: '100%',
               transition: 'transform 0.2s, box-shadow 0.2s',
               '&:hover': {
