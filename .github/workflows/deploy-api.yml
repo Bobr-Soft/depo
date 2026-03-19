@@ -108,11 +108,10 @@ jobs:
       - name: Deploy API with PM2
         working-directory: apps/api
         run: |
-          yarn dlx pm2 describe depo-api > /dev/null 2>&1 \
-            && yarn dlx pm2 restart depo-api --update-env \
-            || yarn dlx pm2 start index.js --name depo-api --update-env
-          yarn dlx pm2 save --force
+          pm2 delete depo-api || true
+          pm2 start index.js --name "depo-api" --update-env
+          pm2 save --force
 
       - name: Show PM2 process status
         run: |
-          yarn dlx pm2 status
+          pm2 status

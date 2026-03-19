@@ -7,19 +7,50 @@ const { allocatePutawayLocation } = require('./wms');
 require('dotenv').config();
 
 const app = express();
-// Use CORS_ORIGINS env var (comma-separated). Fallback to open CORS for dev.
-const corsOrigins = process.env.CORS_ORIGINS
-  ? process.env.CORS_ORIGINS.split(',').map((origin) => origin.trim())
+const REQUIRED_WEB_ORIGIN = 'https://depo.htibee.hu';
+
+function normalizeOrigin(origin) {
+  return String(origin || '').trim().replace(/\/+$/, '');
+}
+
+// Use CORS_ORIGINS env var (comma-separated). Ensure production web origin is always allowed.
+const configuredCorsOrigins = process.env.CORS_ORIGINS
+  ? process.env.CORS_ORIGINS.split(',').map(normalizeOrigin).filter(Boolean)
+  : null;
+
+const corsOrigins = configuredCorsOrigins
+  ? [...new Set([...configuredCorsOrigins, normalizeOrigin(REQUIRED_WEB_ORIGIN)])]
   : null;
 
 app.use(
   cors(
     corsOrigins
-      ? { origin: corsOrigins, credentials: true }
+      ? {
+          origin: (origin, callback) => {
+            if (!origin) {
+              callback(null, true);
+              return;
+            }
+
+            callback(null, corsOrigins.includes(normalizeOrigin(origin)));
+          },
+          credentials: true,
+        }
       : { origin: true, credentials: true }
   )
 );
 app.use(express.json());
+
+// Accept both /endpoint and /api/endpoint request shapes.
+app.use((req, _res, next) => {
+  if (req.url === '/api' || req.url.startsWith('/api?')) {
+    req.url = req.url.replace('/api', '/');
+  } else if (req.url.startsWith('/api/')) {
+    req.url = req.url.slice(4);
+  }
+
+  next();
+});
 
 // Simulator delay middleware — delays all non-simulator API responses
 app.use((req, res, next) => {
