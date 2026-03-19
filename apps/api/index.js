@@ -69,11 +69,31 @@ async function ensureDamageReportsTable() {
   }
 }
 
+async function ensureInventoryLogsTable() {
+  try {
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS inventory_logs (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        item_id INT NOT NULL,
+        user_id INT,
+        action_type VARCHAR(50) NOT NULL,
+        change_amount INT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+  } catch (err) {
+    console.error('⚠️ Could not create inventory_logs table:', err.message);
+  }
+}
+
 // Initialize database connection test
 let dbConnected = false;
 testDBConnection().then(result => {
   dbConnected = result;
-  if (result) ensureDamageReportsTable();
+  if (result) {
+    ensureDamageReportsTable();
+    ensureInventoryLogsTable();
+  }
 });
 
 // ─── Simulator In-Memory State ────────────────────────────────────────────────
@@ -88,6 +108,10 @@ function isValidEmail(email) {
 
 function isValidString(str, maxLength = 255) {
   return typeof str === 'string' && str.trim().length > 0 && str.length <= maxLength;
+}
+
+function mapExceptionReasonToActionType(reason) {
+  return reason === 'damage' ? 'damage' : 'adjust';
 }
 
 function normalizeId(value) {
@@ -2421,6 +2445,214 @@ app.put('/tasks/:taskId/items/:itemId/accept-shortage', authenticateJWT, require
     return res.status(500).json({ message: 'Database error' });
   }
 });
+
+async function handleTaskItemException(req, res) {
+  const parsedTaskId = Number.parseInt(req.params.taskId, 10);
+  const parsedItemId = Number.parseInt(req.params.itemId, 10);
+  const parsedLocationId = Number.parseInt(String(req.body?.locationId), 10);
+  const parsedPickedQuantity = Number.parseInt(String(req.body?.pickedQuantity), 10);
+  const parsedMissingQuantity = Number.parseInt(String(req.body?.missingQuantity), 10);
+  const reason = String(req.body?.reason || '').trim().toLowerCase();
+
+  if (!Number.isInteger(parsedTaskId) || parsedTaskId <= 0) {
+    return res.status(400).json({ message: 'Invalid taskId' });
+  }
+  if (!Number.isInteger(parsedItemId) || parsedItemId <= 0) {
+    return res.status(400).json({ message: 'Invalid itemId' });
+  }
+  if (!Number.isInteger(parsedLocationId) || parsedLocationId <= 0) {
+    return res.status(400).json({ message: 'locationId must be a positive integer' });
+  }
+  if (!Number.isInteger(parsedPickedQuantity) || parsedPickedQuantity < 0) {
+    return res.status(400).json({ message: 'pickedQuantity must be a non-negative integer' });
+  }
+  if (!Number.isInteger(parsedMissingQuantity) || parsedMissingQuantity < 0) {
+    return res.status(400).json({ message: 'missingQuantity must be a non-negative integer' });
+  }
+  if (!['shortage', 'damage'].includes(reason)) {
+    return res.status(400).json({ message: "reason must be 'shortage' or 'damage'" });
+  }
+
+  if (!dbConnected) {
+    return res.status(503).json({ message: 'Database not available' });
+  }
+
+  const userId = resolveAuthenticatedUserId(req);
+  if (!userId) {
+    return res.status(401).json({ message: 'Unable to resolve authenticated user id' });
+  }
+
+  const connection = await db.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const [taskItemRows] = await connection.query(
+      `SELECT ti.id, ti.requested_quantity, ti.picked_quantity,
+              t.assigned_user, t.status AS task_status, u.email AS assigned_email
+       FROM task_items ti
+       JOIN tasks t ON t.id = ti.task_id
+       LEFT JOIN users u ON u.id = t.assigned_user
+       WHERE ti.task_id = ? AND ti.item_id = ?
+       LIMIT 1
+       FOR UPDATE`,
+      [parsedTaskId, parsedItemId]
+    );
+
+    if (!taskItemRows.length) {
+      await connection.rollback();
+      return res.status(404).json({ message: 'Task item not found' });
+    }
+
+    const taskItem = taskItemRows[0];
+    const requestedQuantity = Number(taskItem.requested_quantity || 0);
+    if (parsedPickedQuantity + parsedMissingQuantity > requestedQuantity) {
+      await connection.rollback();
+      return res.status(400).json({ message: 'pickedQuantity + missingQuantity cannot exceed requested quantity' });
+    }
+
+    if (!taskItem.assigned_user) {
+      await connection.rollback();
+      return res.status(409).json({ message: 'Task is unassigned. Take the task first.' });
+    }
+
+    if (
+      taskItem.assigned_email &&
+      req.user?.email &&
+      taskItem.assigned_email.toLowerCase() !== req.user.email.toLowerCase()
+    ) {
+      await connection.rollback();
+      return res.status(403).json({ message: 'Access denied: task is not assigned to this user' });
+    }
+
+    const taskStatus = String(taskItem.task_status || '').toLowerCase();
+    if (taskStatus === 'completed' || taskStatus === 'cancelled') {
+      await connection.rollback();
+      return res.status(409).json({ message: 'Cannot update completed or cancelled tasks' });
+    }
+
+    const [inventoryRows] = await connection.query(
+      `SELECT id, quantity
+       FROM inventory
+       WHERE item_id = ? AND location_id = ?
+       LIMIT 1
+       FOR UPDATE`,
+      [parsedItemId, parsedLocationId]
+    );
+
+    if (!inventoryRows.length) {
+      await connection.rollback();
+      return res.status(404).json({ message: 'Inventory row not found for item and location' });
+    }
+
+    const inventoryRow = inventoryRows[0];
+    const currentQuantity = Number(inventoryRow.quantity || 0);
+    const totalDeduction = parsedPickedQuantity + parsedMissingQuantity;
+    const rawNextQuantity = currentQuantity - totalDeduction;
+    const nextQuantity = Math.max(0, rawNextQuantity);
+
+    if (rawNextQuantity < 0) {
+      console.error('CRITICAL: Inventory would go below zero during picking exception', {
+        taskId: parsedTaskId,
+        itemId: parsedItemId,
+        locationId: parsedLocationId,
+        currentQuantity,
+        attemptedDeduction: totalDeduction,
+      });
+    }
+
+    const nextItemStatus = parsedMissingQuantity > 0 ? 'partial' : 'picked';
+
+    await connection.query(
+      `UPDATE task_items
+       SET picked_quantity = ?, status = ?
+       WHERE task_id = ? AND item_id = ?`,
+      [parsedPickedQuantity, nextItemStatus, parsedTaskId, parsedItemId]
+    );
+
+    await connection.query(
+      `UPDATE inventory
+       SET quantity = ?
+       WHERE id = ?`,
+      [nextQuantity, inventoryRow.id]
+    );
+
+    if (parsedPickedQuantity > 0) {
+      await connection.query(
+        `INSERT INTO inventory_logs (item_id, user_id, action_type, change_amount)
+         VALUES (?, ?, 'pick', ?)`,
+        [parsedItemId, userId, -parsedPickedQuantity]
+      );
+    }
+
+    if (parsedMissingQuantity > 0) {
+      await connection.query(
+        `INSERT INTO inventory_logs (item_id, user_id, action_type, change_amount)
+         VALUES (?, ?, ?, ?)`,
+        [parsedItemId, userId, mapExceptionReasonToActionType(reason), -parsedMissingQuantity]
+      );
+    }
+
+    const [locationRows] = await connection.query(
+      `SELECT location_code
+       FROM locations
+       WHERE id = ?
+       LIMIT 1`,
+      [parsedLocationId]
+    );
+
+    const locationCode = locationRows[0]?.location_code || `#${parsedLocationId}`;
+    const [auditTaskResult] = await connection.query(
+      `INSERT INTO tasks (name, type, priority, status, created_at, updated_at)
+       VALUES (?, 'audit', 1, 'pending', NOW(), NOW())`,
+      [`System Generated Audit: Location ${locationCode}`]
+    );
+
+    const [progressRows] = await connection.query(
+      `SELECT COUNT(*) AS totalItems,
+              SUM(CASE WHEN status IN ('picked', 'partial', 'shortage_accepted') THEN 1 ELSE 0 END) AS doneItems
+       FROM task_items
+       WHERE task_id = ?`,
+      [parsedTaskId]
+    );
+
+    const totalItems = Number(progressRows[0]?.totalItems || 0);
+    const doneItems = Number(progressRows[0]?.doneItems || 0);
+    const nextTaskStatus = totalItems > 0 && doneItems === totalItems ? 'completed' : 'in_progress';
+
+    await connection.query(
+      `UPDATE tasks
+       SET status = ?, updated_at = NOW()
+       WHERE id = ?`,
+      [nextTaskStatus, parsedTaskId]
+    );
+
+    await connection.commit();
+
+    return res.status(200).json({
+      message: 'Picking exception reported successfully',
+      success: true,
+      taskId: parsedTaskId,
+      itemId: parsedItemId,
+      locationId: parsedLocationId,
+      pickedQuantity: parsedPickedQuantity,
+      missingQuantity: parsedMissingQuantity,
+      reason,
+      itemStatus: nextItemStatus,
+      taskStatus: nextTaskStatus,
+      auditTaskId: Number(auditTaskResult.insertId),
+    });
+  } catch (err) {
+    await connection.rollback();
+    console.error('❌ Error reporting picking exception:', err.message);
+    return res.status(500).json({ message: 'Database error' });
+  } finally {
+    connection.release();
+  }
+}
+
+app.post('/tasks/:taskId/items/:itemId/exception', authenticateJWT, handleTaskItemException);
+app.post('/api/tasks/:taskId/items/:itemId/exception', authenticateJWT, handleTaskItemException);
 
 // ─── Simulator Endpoints ─────────────────────────────────────────────────────
 
