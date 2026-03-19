@@ -2833,9 +2833,10 @@ app.post('/simulator/block-user', authenticateJWT, requireAdmin, (req, res) => {
 });
 
 const PORT = process.env.PORT || 4000;
+const BIND_HOST = process.env.BIND_HOST || '0.0.0.0';
 if (require.main === module) {
-  app.listen(PORT, () => {
-    console.log(`✅ Server running on port ${PORT}`);
+  app.listen(PORT, BIND_HOST, () => {
+    console.log(`✅ Server running on ${BIND_HOST}:${PORT}`);
   });
 }
 

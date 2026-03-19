@@ -42,10 +42,12 @@ jobs:
 
       - name: Deploy and Serve (PM2 via Yarn)
         working-directory: apps/web
-        # Uses yarn dlx to execute PM2 securely within the Corepack context.
-        # It attempts to start a new server; if the process name already exists, it restarts it.
+        # Serve static files with explicit host binding for remote access.
         run: |
-          yarn dlx pm2 serve dist 3000 --name "depo-web" --spa || yarn dlx pm2 restart depo-web
+          yarn dlx pm2 describe depo-web > /dev/null 2>&1 \
+            && yarn dlx pm2 restart depo-web --update-env \
+            || yarn dlx pm2 start "yarn dlx serve -s dist -l tcp://0.0.0.0:3000" --name depo-web
+          yarn dlx pm2 save --force
 
       - name: Deployment complete
         run: echo "✅ Web app deployed successfully on Proxmox frontend LXC!"
