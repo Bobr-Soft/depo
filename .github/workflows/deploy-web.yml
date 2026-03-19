@@ -15,7 +15,7 @@ env:
 jobs:
   deploy:
     name: 🚀 Deploy Web App
-    runs-on: [self-hosted, frontend]
+    runs-on: [self-hosted, depo-frontend]
 
     steps:
       - name: Checkout repository

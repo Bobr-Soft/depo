@@ -64,7 +64,7 @@ jobs:
   # ============================================
   deploy:
     name: 🚀 Deploy API (Self-Hosted)
-    runs-on: self-hosted
+    runs-on: [self-hosted, depo-backend]
     needs: test
     if: github.ref == 'refs/heads/main'
 
@@ -90,8 +90,19 @@ jobs:
 
       - name: Inject Production Configurations
         working-directory: apps/api
+        env:
+          API_ENV_FILE: ${{ secrets['API_ENV_FILE'] }}
         run: |
-          cp /opt/depo-config/api/.env .env
+          if [ -f /opt/depo-config/api/.env ]; then
+            cp /opt/depo-config/api/.env .env
+            echo "Using runner env file from /opt/depo-config/api/.env"
+          elif [ -n "${API_ENV_FILE}" ]; then
+            printf '%s\n' "${API_ENV_FILE}" > .env
+            echo "Using API_ENV_FILE secret"
+          else
+            echo "Missing env source. Provide /opt/depo-config/api/.env on runner or set API_ENV_FILE secret." >&2
+            exit 1
+          fi
           chmod 600 .env
 
       - name: Deploy API with PM2
