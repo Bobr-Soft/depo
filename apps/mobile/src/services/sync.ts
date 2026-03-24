@@ -7,6 +7,7 @@ import { markItemAsPicked } from './database';
 import { logout, reauthenticateSilently } from './auth';
 
 let isSyncing = false;
+let activeSyncPromise: Promise<{ success: boolean; tasks?: TaskComplete[]; error?: string }> | null = null;
 
 class ApiSyncError extends Error {
   statusCode: number;
@@ -162,7 +163,6 @@ async function fetchTasksFromApi(): Promise<TaskComplete[]> {
       console.log(`Successfully fetched ${data.length || 0} tasks`);
       return data;
     } catch (error) {
-      clearTimeout(0);
       lastError = error instanceof Error ? error : new Error('Unknown error');
 
       // Check if error is retryable
@@ -532,46 +532,52 @@ export async function syncData(): Promise<{
   tasks?: TaskComplete[];
   error?: string;
 }> {
-  if (isSyncing) {
-    console.log('Sync already in progress, skipping...');
-    return { success: false, error: 'Sync already in progress' };
+  if (activeSyncPromise) {
+    console.log('Sync already in progress, joining active sync...');
+    return activeSyncPromise;
   }
 
-  // Check if database is initialized
-  if (!db.isDatabaseInitialized()) {
-    console.warn('Database not initialized, sync skipped');
-    return { success: false, error: 'Database not initialized' };
-  }
+  activeSyncPromise = (async () => {
+    // Lock immediately to prevent race between concurrent callers.
+    isSyncing = true;
 
-  const online = await isOnline();
-  if (!online) {
-    console.log('Device is offline, sync skipped');
-    return { success: false, error: 'Device is offline' };
-  }
+    try {
+      // Check if database is initialized
+      if (!db.isDatabaseInitialized()) {
+        console.warn('Database not initialized, sync skipped');
+        return { success: false, error: 'Database not initialized' };
+      }
 
-  isSyncing = true;
+      const online = await isOnline();
+      if (!online) {
+        console.log('Device is offline, sync skipped');
+        return { success: false, error: 'Device is offline' };
+      }
 
-  try {
-    console.log('Starting sync...');
+      console.log('Starting sync...');
 
-    const [apiUrl, token] = await Promise.all([getApiUrl(), getToken()]);
-    if (!token || !apiUrl) {
-      throw new Error('Missing API URL or token for sync');
+      const [apiUrl, token] = await Promise.all([getApiUrl(), getToken()]);
+      if (!token || !apiUrl) {
+        throw new Error('Missing API URL or token for sync');
+      }
+
+      await pushSyncQueue(token, apiUrl);
+
+      const tasks = await pullRemoteData();
+
+      console.log('Sync completed successfully');
+      return { success: true, tasks };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Sync failed:', errorMessage);
+      return { success: false, error: errorMessage };
+    } finally {
+      isSyncing = false;
+      activeSyncPromise = null;
     }
+  })();
 
-    await pushSyncQueue(token, apiUrl);
-
-    const tasks = await pullRemoteData();
-
-    console.log('Sync completed successfully');
-    return { success: true, tasks };
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    console.error('Sync failed:', errorMessage);
-    return { success: false, error: errorMessage };
-  } finally {
-    isSyncing = false;
-  }
+  return activeSyncPromise;
 }
 
 /**
