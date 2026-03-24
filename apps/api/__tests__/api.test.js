@@ -118,6 +118,20 @@ describe('POST /login', () => {
   });
 });
 
+describe('GET /api', () => {
+  test('200 returns backend landing payload', async () => {
+    const res = await request(app).get('/api');
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      name: 'Depo API',
+      status: 'ok',
+    });
+    expect(res.body.docs).toMatchObject({
+      login: 'POST /login',
+    });
+  });
+});
+
 describe('GET /me', () => {
   test('401 when no token provided', async () => {
     const res = await request(app).get('/me');

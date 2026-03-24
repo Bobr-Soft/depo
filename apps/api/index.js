@@ -47,7 +47,9 @@ app.use((req, _res, next) => {
 
   // Keep explicit /api routes intact; they are already declared with /api.
   const keepApiPrefix =
-    pathOnly === '/api/inbound/putaway'
+    pathOnly === '/api'
+    || pathOnly === '/api/'
+    || pathOnly === '/api/inbound/putaway'
     || /^\/api\/tasks\/[^/]+$/.test(pathOnly)
     || /^\/api\/tasks\/[^/]+\/items\/[^/]+\/exception$/.test(pathOnly);
 
@@ -567,6 +569,20 @@ function requireSupervisorOrAdmin(req, res, next) {
   }
   next();
 }
+
+app.get('/api', (_req, res) => {
+  res.json({
+    name: 'Depo API',
+    status: 'ok',
+    message: 'Backend service is running.',
+    docs: {
+      login: 'POST /login',
+      me: 'GET /me',
+      items: 'GET /items',
+      tasks: 'GET /tasks',
+    },
+  });
+});
 
 // Login endpoint with Entra ID and database validation
 app.post('/login', async (req, res) => {
