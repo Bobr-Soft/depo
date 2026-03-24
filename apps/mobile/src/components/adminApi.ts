@@ -218,8 +218,13 @@ export interface CreateTaskInput {
   name: string;
   type: 'picking' | 'inbound' | 'transfer';
   priority: number;
+  source_id?: string | null;
   deadline?: string | null;
   assigned_user?: number | null;
+  items?: Array<{
+    item_id: number;
+    requested_quantity: number;
+  }>;
 }
 
 export async function adminCreateTask(data: CreateTaskInput): Promise<TaskComplete> {

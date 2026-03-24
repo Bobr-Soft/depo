@@ -3,7 +3,7 @@ import { Alert } from "react-native";
 import { useFocusEffect, useLocalSearchParams, router } from "expo-router";
 import { H2, Text, YStack, XStack, Button, Card, ScrollView, Spinner, Separator } from "@repo/ui";
 import { ArrowLeft, CheckCircle2, Package, Clock, Barcode, AlertCircle, MapPin, Lock } from "@tamagui/lucide-icons";
-import { loadTask } from "@/components/api";
+import { loadTask, refreshTask } from "@/components/api";
 import { TaskComplete } from "@/constants";
 import { BarcodeScanner } from "@/components";
 import { taskItemPicked } from "@/services/sync";
@@ -83,7 +83,15 @@ export default function PickingDetailScreen() {
             onPress: async () => {
               try {
                 await taskItemPicked(matchedItem.task_id, matchedItem.item.id, matchedItem.requested_quantity);
-                await fetchTaskDetails();
+
+                // Prefer a server-driven refresh for this task to avoid stale cache status.
+                const refreshedTask = await refreshTask(matchedItem.task_id);
+                if (refreshedTask) {
+                  setTask(refreshedTask);
+                } else {
+                  await fetchTaskDetails();
+                }
+
                 setShowScanner(false);
                 setScannerKey(prev => prev + 1);
               } catch (pickError) {

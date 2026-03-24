@@ -1,6 +1,6 @@
 import { TaskComplete } from '@/constants';
 import { buildApiUrl, getApiUrl, getToken } from '@/services/secureStorage';
-import { getTasksWithSync, forceRefresh, taskItemPicked } from '@/services/sync';
+import { getTasksWithSync, forceRefresh, refreshTaskById, taskItemPicked } from '@/services/sync';
 import { logout, reauthenticateSilently } from '@/services/auth';
 
 const DEV_BYPASS_TOKEN = 'dev-bypass-token';
@@ -76,6 +76,27 @@ export async function refreshTasks(): Promise<TaskComplete[]> {
   } catch (error) {
     console.error('Failed to refresh tasks:', error);
     return [];
+  }
+}
+
+export async function refreshTask(id: number): Promise<TaskComplete | null> {
+  try {
+    const token = await getToken();
+
+    if (!token) {
+      console.warn('refreshTask: no auth token in secure storage');
+      return null;
+    }
+
+    if (token === DEV_BYPASS_TOKEN) {
+      return DEV_MOCK_TASKS.find((task) => task.id === id) ?? null;
+    }
+
+    const result = await refreshTaskById(id);
+    return result.task ?? null;
+  } catch (error) {
+    console.error('Failed to refresh task:', error);
+    return null;
   }
 }
 

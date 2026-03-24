@@ -2645,7 +2645,7 @@ app.put('/damage-reports/:id/status', authenticateJWT, requireSupervisorOrAdmin,
 
 // Create a new task
 app.post('/tasks', authenticateJWT, requireAdmin, async (req, res) => {
-  const { name, type, priority, deadline, assigned_user } = req.body;
+  const { name, type, priority, deadline, assigned_user, source_id, items } = req.body;
 
   if (!isValidString(name, 255)) {
     return res.status(400).json({ message: 'Invalid task name' });
@@ -2658,6 +2658,43 @@ app.post('/tasks', authenticateJWT, requireAdmin, async (req, res) => {
     return res.status(400).json({ message: 'Priority must be 1 (critical) to 4 (low)' });
   }
 
+  const safeSourceId = source_id === undefined || source_id === null || source_id === ''
+    ? null
+    : String(source_id).trim().slice(0, 255);
+
+  if (source_id !== undefined && source_id !== null && source_id !== '' && !isValidString(safeSourceId, 255)) {
+    return res.status(400).json({ message: 'Invalid source_id' });
+  }
+
+  if (items !== undefined && !Array.isArray(items)) {
+    return res.status(400).json({ message: 'items must be an array' });
+  }
+
+  const normalizedItems = Array.isArray(items)
+    ? items.map((entry, index) => {
+      const parsedItemId = Number.parseInt(String(entry?.item_id), 10);
+      const parsedRequested = Number.parseInt(String(entry?.requested_quantity), 10);
+      if (!Number.isInteger(parsedItemId) || parsedItemId <= 0) {
+        throw new Error(`Invalid item_id at index ${index}`);
+      }
+      if (!Number.isInteger(parsedRequested) || parsedRequested <= 0) {
+        throw new Error(`Invalid requested_quantity at index ${index}`);
+      }
+      return {
+        item_id: parsedItemId,
+        requested_quantity: parsedRequested,
+      };
+    })
+    : [];
+
+  const duplicateItemIds = new Set();
+  for (const entry of normalizedItems) {
+    if (duplicateItemIds.has(entry.item_id)) {
+      return res.status(400).json({ message: 'Duplicate item_id values are not allowed in items' });
+    }
+    duplicateItemIds.add(entry.item_id);
+  }
+
   try {
     if (!dbConnected) return res.status(503).json({ message: 'Database not available' });
     const safeDeadline = deadline ? new Date(deadline) : null;
@@ -2667,15 +2704,56 @@ app.post('/tasks', authenticateJWT, requireAdmin, async (req, res) => {
     const safeAssignedUser = Number.isInteger(Number(assigned_user)) && Number(assigned_user) > 0
       ? Number(assigned_user) : null;
 
-    const [result] = await db.query(
-      `INSERT INTO tasks (name, type, priority, status, deadline, assigned_user, created_at, updated_at)
-       VALUES (?, ?, ?, 'pending', ?, ?, NOW(), NOW())`,
-      [name.trim(), type, parsedPriority, safeDeadline, safeAssignedUser]
-    );
-    const newId = Number(result.insertId);
-    const [rows] = await db.query('SELECT * FROM tasks WHERE id = ?', [newId]);
-    return res.status(201).json(rows[0]);
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+
+      const [result] = await connection.query(
+        `INSERT INTO tasks (name, type, source_id, priority, status, deadline, assigned_user, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'pending', ?, ?, NOW(), NOW())`,
+        [name.trim(), type, safeSourceId, parsedPriority, safeDeadline, safeAssignedUser]
+      );
+
+      const newId = Number(result.insertId);
+
+      if (normalizedItems.length > 0) {
+        const itemIds = normalizedItems.map((entry) => entry.item_id);
+        const placeholders = itemIds.map(() => '?').join(',');
+        const [existingItems] = await connection.query(
+          `SELECT id FROM items WHERE id IN (${placeholders})`,
+          itemIds
+        );
+
+        const existingItemSet = new Set(existingItems.map((row) => Number(row.id)));
+        const missingItem = normalizedItems.find((entry) => !existingItemSet.has(entry.item_id));
+        if (missingItem) {
+          await connection.rollback();
+          return res.status(400).json({ message: `item_id does not exist: ${missingItem.item_id}` });
+        }
+
+        for (const entry of normalizedItems) {
+          await connection.query(
+            `INSERT INTO task_items (task_id, item_id, requested_quantity, picked_quantity, status)
+             VALUES (?, ?, ?, 0, 'pending')`,
+            [newId, entry.item_id, entry.requested_quantity]
+          );
+        }
+      }
+
+      await connection.commit();
+
+      const [rows] = await db.query('SELECT * FROM tasks WHERE id = ?', [newId]);
+      return res.status(201).json(rows[0]);
+    } catch (txErr) {
+      await connection.rollback();
+      throw txErr;
+    } finally {
+      connection.release();
+    }
   } catch (err) {
+    if (err instanceof Error && err.message.startsWith('Invalid ')) {
+      return res.status(400).json({ message: err.message });
+    }
     console.error('❌ Error creating task:', err.message);
     return res.status(500).json({ message: 'Database error' });
   }

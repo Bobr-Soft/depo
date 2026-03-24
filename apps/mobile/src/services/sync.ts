@@ -31,6 +31,19 @@ type InboundItemUpsertPayload = {
   location_id?: number | null;
 };
 
+type TaskCreateQueuePayload = {
+  name: string;
+  type: 'picking' | 'inbound' | 'transfer';
+  priority: number;
+  source_id?: string | null;
+  deadline?: string | null;
+  assigned_user?: number | null;
+  items?: Array<{
+    item_id: number;
+    requested_quantity: number;
+  }>;
+};
+
 function isJwtToken(token: string): boolean {
   const parts = token.split('.');
   return parts.length === 3 && parts.every((part) => part.length > 0);
@@ -179,6 +192,111 @@ async function fetchTasksFromApi(): Promise<TaskComplete[]> {
   throw lastError || new Error('Failed to fetch tasks after retries');
 }
 
+async function fetchTaskByIdFromApi(taskId: number): Promise<TaskComplete | null> {
+  const [apiUrl, storedToken] = await Promise.all([getApiUrl(), getToken()]);
+  let token = storedToken;
+  let hasReauthenticated = false;
+
+  if (!token || !apiUrl) {
+    throw new Error('Missing API URL or token');
+  }
+
+  if (!isJwtToken(token)) {
+    const reauthResult = await reauthenticateSilently();
+    if (!reauthResult.success) {
+      await logout();
+      await db.clearDatabase();
+      throw new Error(reauthResult.error ?? 'Invalid token. Please log in again.');
+    }
+
+    token = reauthResult.token ?? await getToken();
+    hasReauthenticated = true;
+
+    if (!token || !isJwtToken(token)) {
+      await logout();
+      await db.clearDatabase();
+      throw new Error('Failed to renew token. Please log in again.');
+    }
+  }
+
+  let lastError: Error | null = null;
+
+  for (let attempt = 1; attempt <= RETRY_CONFIG.maxAttempts; attempt++) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => {
+        console.error(
+          `Request timeout after ${API_TIMEOUT}ms to ${buildApiUrl(apiUrl, `/tasks/${taskId}`)} (attempt ${attempt}/${RETRY_CONFIG.maxAttempts})`
+        );
+        controller.abort();
+      }, API_TIMEOUT);
+
+      const response = await fetch(buildApiUrl(apiUrl, `/tasks/${taskId}`), {
+        signal: controller.signal,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      clearTimeout(timeoutId);
+
+      if (response.status === 404) {
+        return null;
+      }
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => 'Unknown error');
+        if (response.status === 401 || response.status === 403) {
+          if (!hasReauthenticated) {
+            const reauthResult = await reauthenticateSilently();
+            if (reauthResult.success) {
+              const refreshedToken = reauthResult.token ?? await getToken();
+              if (refreshedToken && isJwtToken(refreshedToken)) {
+                token = refreshedToken;
+                hasReauthenticated = true;
+                continue;
+              }
+            }
+          }
+
+          await logout();
+          await db.clearDatabase();
+          throw new Error('Unauthorized. Please log in again.');
+        }
+
+        throw new Error(`API error: ${response.status} - ${errorText}`);
+      }
+
+      const task = await response.json();
+      return task as TaskComplete;
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error('Unknown error');
+
+      const isRetryable = error instanceof Error && (
+        error.name === 'AbortError' ||
+        error.message.includes('Network') ||
+        error.message.includes('timeout') ||
+        error.message.includes('ETIMEDOUT') ||
+        error.message.includes('ECONNREFUSED')
+      );
+
+      if (isRetryable && attempt < RETRY_CONFIG.maxAttempts) {
+        const delay = getBackoffDelay(attempt);
+        await sleep(delay);
+        continue;
+      }
+
+      if (lastError.name === 'AbortError') {
+        throw new Error(`Request timeout after ${API_TIMEOUT}ms. Backend at ${apiUrl} took too long to respond.`);
+      }
+      throw lastError;
+    }
+  }
+
+  throw lastError || new Error(`Failed to fetch task ${taskId} after retries`);
+}
+
 function normalizeBarcode(value: string): string {
   return value.trim().replace(/\s+/g, '').toLowerCase();
 }
@@ -284,7 +402,24 @@ async function pushSyncQueue(token: string, apiUrl: string): Promise<void> {
     try {
       const payload = JSON.parse(operation.payload);
 
-      if (operation.entity_type === 'task_item' && operation.operation === 'UPDATE') {
+      if (operation.entity_type === 'task' && operation.operation === 'CREATE') {
+        const response = await fetch(buildApiUrl(apiUrl, '/tasks'), {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload as TaskCreateQueuePayload),
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text().catch(() => 'Unknown error');
+          throw new ApiSyncError(response.status, `API error: ${response.status} - ${errorText}`);
+        }
+
+        console.log(`✅ Synced task create operation ${operation.id}`);
+        await db.removeSyncOperation(operation.id);
+      } else if (operation.entity_type === 'task_item' && operation.operation === 'UPDATE') {
         const { picked_quantity } = payload;
         const taskItemId = operation.entity_id;
 
@@ -489,6 +624,68 @@ export async function forceRefresh(): Promise<{
   }
 
   return await syncData();
+}
+
+export async function refreshTaskById(taskId: number): Promise<{
+  success: boolean;
+  task?: TaskComplete;
+  error?: string;
+}> {
+  if (!db.isDatabaseInitialized()) {
+    return { success: false, error: 'Database not initialized' };
+  }
+
+  const cachedTask = await db.getTaskById(taskId);
+  const online = await isOnline();
+
+  if (!online) {
+    return {
+      success: false,
+      task: cachedTask ?? undefined,
+      error: 'Device is offline. Showing cached data.',
+    };
+  }
+
+  if (isSyncing) {
+    return {
+      success: false,
+      task: cachedTask ?? undefined,
+      error: 'Sync already in progress. Showing cached data.',
+    };
+  }
+
+  isSyncing = true;
+  try {
+    const [apiUrl, token] = await Promise.all([getApiUrl(), getToken()]);
+    if (!apiUrl || !token) {
+      throw new Error('Missing API URL or token for refresh');
+    }
+
+    await pushSyncQueue(token, apiUrl);
+
+    const task = await fetchTaskByIdFromApi(taskId);
+    if (!task) {
+      return {
+        success: false,
+        task: cachedTask ?? undefined,
+        error: 'Task not found on server',
+      };
+    }
+
+    await db.saveTasks([task]);
+    await db.setLastSyncTime(Date.now());
+
+    return { success: true, task };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    return {
+      success: false,
+      task: cachedTask ?? undefined,
+      error: errorMessage,
+    };
+  } finally {
+    isSyncing = false;
+  }
 }
 
 /**
