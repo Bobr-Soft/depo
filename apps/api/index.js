@@ -47,7 +47,9 @@ app.use((req, _res, next) => {
 
   // Keep explicit /api routes intact; they are already declared with /api.
   const keepApiPrefix =
-    pathOnly === '/api/inbound/putaway'
+    pathOnly === '/api'
+    || pathOnly === '/api/'
+    || pathOnly === '/api/inbound/putaway'
     || /^\/api\/tasks\/[^/]+$/.test(pathOnly)
     || /^\/api\/tasks\/[^/]+\/items\/[^/]+\/exception$/.test(pathOnly);
 
@@ -568,6 +570,20 @@ function requireSupervisorOrAdmin(req, res, next) {
   next();
 }
 
+app.get('/api', (_req, res) => {
+  res.json({
+    name: 'Depo API',
+    status: 'ok',
+    message: 'Backend service is running.',
+    docs: {
+      login: 'POST /login',
+      me: 'GET /me',
+      items: 'GET /items',
+      tasks: 'GET /tasks',
+    },
+  });
+});
+
 // Login endpoint with Entra ID and database validation
 app.post('/login', async (req, res) => {
   const { email } = req.body;
@@ -651,6 +667,71 @@ app.get('/items', authenticateJWT, async (req, res) => {
   }
 });
 
+const MAX_ITEMS_PER_SHELF = 5;
+const SHELVES_PER_RACK = 4;
+const MAX_ITEMS_PER_RACK = MAX_ITEMS_PER_SHELF * SHELVES_PER_RACK;
+
+async function getLocationCapacityViolation(locationId, excludeItemId = null) {
+  if (locationId === null || locationId === undefined || locationId === '') {
+    return null;
+  }
+
+  const parsedLocationId = Number.parseInt(String(locationId), 10);
+  if (!Number.isInteger(parsedLocationId) || parsedLocationId <= 0) {
+    return 'Invalid location_id';
+  }
+
+  const locationCapabilities = await getLocationsSchemaCapabilities();
+  if (!locationCapabilities.hasRowNum || !locationCapabilities.hasColNum || !locationCapabilities.hasShelfLevel) {
+    return null;
+  }
+
+  const [targetRows] = await db.query(
+    `SELECT id, row_num, col_num, shelf_level
+     FROM locations
+     WHERE id = ?
+     LIMIT 1`,
+    [parsedLocationId]
+  );
+
+  if (targetRows.length === 0) {
+    return 'Target location does not exist';
+  }
+
+  const target = targetRows[0];
+  const [countRows] = await db.query(
+    `SELECT
+       SUM(CASE WHEN l.row_num = ? AND l.col_num = ? THEN 1 ELSE 0 END) AS rack_count,
+       SUM(CASE WHEN l.row_num = ? AND l.col_num = ? AND l.shelf_level = ? THEN 1 ELSE 0 END) AS shelf_count
+     FROM items i
+     JOIN locations l ON i.location_id = l.id
+     WHERE i.location_id IS NOT NULL
+       AND (? IS NULL OR i.id <> ?)`,
+    [
+      target.row_num,
+      target.col_num,
+      target.row_num,
+      target.col_num,
+      target.shelf_level,
+      excludeItemId,
+      excludeItemId,
+    ]
+  );
+
+  const rackCount = Number.parseInt(String(countRows[0]?.rack_count ?? 0), 10) || 0;
+  const shelfCount = Number.parseInt(String(countRows[0]?.shelf_count ?? 0), 10) || 0;
+
+  if (shelfCount >= MAX_ITEMS_PER_SHELF) {
+    return `Shelf capacity reached (${MAX_ITEMS_PER_SHELF} items max)`;
+  }
+
+  if (rackCount >= MAX_ITEMS_PER_RACK) {
+    return `Rack capacity reached (${MAX_ITEMS_PER_RACK} items max)`;
+  }
+
+  return null;
+}
+
 
 app.post('/items', authenticateJWT, requireAdmin, async (req, res) => {
   const { name, barcode, description, quantity, category_id, location_id } = req.body;
@@ -662,6 +743,13 @@ app.post('/items', authenticateJWT, requireAdmin, async (req, res) => {
   try {
     if (dbConnected) {
       const capabilities = await getItemsSchemaCapabilities();
+
+      if (capabilities.hasItemLocationId) {
+        const capacityViolation = await getLocationCapacityViolation(location_id, null);
+        if (capacityViolation) {
+          return res.status(409).json({ message: capacityViolation });
+        }
+      }
 
       let result;
       if (capabilities.hasItemCategoryId && capabilities.hasItemLocationId) {
@@ -698,6 +786,14 @@ app.put('/items/:id', authenticateJWT, requireAdmin, async (req, res) => {
 
   try {
     const capabilities = await getItemsSchemaCapabilities();
+
+    if (capabilities.hasItemLocationId) {
+      const parsedItemId = Number.parseInt(String(id), 10);
+      const capacityViolation = await getLocationCapacityViolation(location_id, parsedItemId);
+      if (capacityViolation) {
+        return res.status(409).json({ message: capacityViolation });
+      }
+    }
 
     if (capabilities.hasItemCategoryId && capabilities.hasItemLocationId) {
       await db.query(
@@ -1681,8 +1777,35 @@ app.get('/locations', authenticateJWT, async (req, res) => {
   try {
     if (dbConnected) {
       const capabilities = await getLocationsSchemaCapabilities();
+
+      const selectParts = [
+        'id',
+        getLocationNameSelectExpr(capabilities),
+        getLocationDescriptionSelectExpr(capabilities),
+      ];
+
+      if (capabilities.hasRowNum) {
+        selectParts.push('row_num');
+      }
+
+      if (capabilities.hasColNum) {
+        selectParts.push('col_num');
+      }
+
+      if (capabilities.hasShelfLevel) {
+        selectParts.push('shelf_level');
+      }
+
+      if (capabilities.hasIsXl) {
+        selectParts.push('is_xl');
+      }
+
+      if (capabilities.hasIsActive) {
+        selectParts.push('is_active');
+      }
+
       const [rows] = await db.query(
-        `SELECT id, ${getLocationNameSelectExpr(capabilities)}, ${getLocationDescriptionSelectExpr(capabilities)} FROM locations`
+        `SELECT ${selectParts.join(', ')} FROM locations`
       );
       res.json(rows);
     } else {
@@ -1691,6 +1814,185 @@ app.get('/locations', authenticateJWT, async (req, res) => {
   } catch (err) {
     console.error('❌ Error fetching locations:', err.message);
     res.status(500).json({ message: 'Database error' });
+  }
+});
+
+app.get('/locations/position', authenticateJWT, async (req, res) => {
+  const rowNum = Number.parseInt(String(req.query?.row_num ?? ''), 10);
+  const colNum = Number.parseInt(String(req.query?.col_num ?? ''), 10);
+  const shelfLevelRaw = req.query?.shelf_level;
+  const shelfLevel = shelfLevelRaw === undefined
+    ? null
+    : Number.parseInt(String(shelfLevelRaw), 10);
+
+  if (!Number.isInteger(rowNum) || !Number.isInteger(colNum) || rowNum < 1 || colNum < 1) {
+    return res.status(400).json({ message: 'Invalid row_num or col_num' });
+  }
+
+  if (shelfLevel !== null && (!Number.isInteger(shelfLevel) || shelfLevel < 0)) {
+    return res.status(400).json({ message: 'Invalid shelf_level' });
+  }
+
+  try {
+    if (dbConnected) {
+      const capabilities = await getLocationsSchemaCapabilities();
+
+      if (!capabilities.hasRowNum || !capabilities.hasColNum) {
+        return res.status(400).json({ message: 'Current schema does not support row/col lookup' });
+      }
+
+      const selectParts = [
+        'id',
+        getLocationNameSelectExpr(capabilities),
+        getLocationDescriptionSelectExpr(capabilities),
+        'row_num',
+        'col_num',
+      ];
+
+      if (capabilities.hasShelfLevel) {
+        selectParts.push('shelf_level');
+      }
+
+      if (capabilities.hasIsXl) {
+        selectParts.push('is_xl');
+      }
+
+      if (capabilities.hasIsActive) {
+        selectParts.push('is_active');
+      }
+
+      const whereParts = ['row_num = ?', 'col_num = ?'];
+      const values = [rowNum, colNum];
+
+      if (capabilities.hasShelfLevel && shelfLevel !== null) {
+        whereParts.push('shelf_level = ?');
+        values.push(shelfLevel);
+      }
+
+      const orderBy = capabilities.hasShelfLevel ? 'ORDER BY shelf_level ASC, id ASC' : 'ORDER BY id ASC';
+      const [rows] = await db.query(
+        `SELECT ${selectParts.join(', ')} FROM locations WHERE ${whereParts.join(' AND ')} ${orderBy}`,
+        values
+      );
+
+      res.json(rows);
+    } else {
+      res.status(503).json({ message: 'Database not available' });
+    }
+  } catch (err) {
+    console.error('❌ Error fetching locations by position:', err.message);
+    res.status(500).json({ message: 'Database error' });
+  }
+});
+
+app.get('/locations/position/rack', authenticateJWT, async (req, res) => {
+  const rowNum = Number.parseInt(String(req.query?.row_num ?? ''), 10);
+  const colNum = Number.parseInt(String(req.query?.col_num ?? ''), 10);
+  const shelfLevelRaw = req.query?.shelf_level;
+  const shelfLevel = shelfLevelRaw === undefined
+    ? null
+    : Number.parseInt(String(shelfLevelRaw), 10);
+
+  if (!Number.isInteger(rowNum) || !Number.isInteger(colNum) || rowNum < 1 || colNum < 1) {
+    return res.status(400).json({ message: 'Invalid row_num or col_num' });
+  }
+
+  if (shelfLevel !== null && (!Number.isInteger(shelfLevel) || shelfLevel < 0)) {
+    return res.status(400).json({ message: 'Invalid shelf_level' });
+  }
+
+  try {
+    if (!dbConnected) {
+      return res.status(503).json({ message: 'Database not available' });
+    }
+
+    const locationCapabilities = await getLocationsSchemaCapabilities();
+    if (!locationCapabilities.hasRowNum || !locationCapabilities.hasColNum) {
+      return res.status(400).json({ message: 'Current schema does not support row/col lookup' });
+    }
+
+    const itemCapabilities = await getItemsSchemaCapabilities();
+    const hasItemLocation = itemCapabilities.hasItemLocationId;
+
+    const locationNameExpr = locationCapabilities.hasName
+      ? 'l.name AS location_name'
+      : locationCapabilities.hasLocationCode
+        ? 'l.location_code AS location_name'
+        : "CONCAT('Location-', l.id) AS location_name";
+
+    const locationDescriptionExpr = locationCapabilities.hasDescription
+      ? 'l.description AS location_description'
+      : locationCapabilities.hasLocationCode
+        ? 'l.location_code AS location_description'
+        : 'NULL AS location_description';
+
+    const selectParts = [
+      'l.id AS location_id',
+      locationNameExpr,
+      locationDescriptionExpr,
+      'l.row_num',
+      'l.col_num',
+      locationCapabilities.hasShelfLevel ? 'l.shelf_level' : 'NULL AS shelf_level',
+      locationCapabilities.hasIsXl ? 'l.is_xl' : 'NULL AS is_xl',
+      locationCapabilities.hasIsActive ? 'l.is_active' : 'NULL AS is_active',
+      'i.id AS item_id',
+      'i.name AS item_name',
+      'i.barcode AS item_barcode',
+      'i.quantity AS item_quantity',
+    ];
+
+    const whereParts = ['l.row_num = ?', 'l.col_num = ?'];
+    const values = [rowNum, colNum];
+
+    if (locationCapabilities.hasShelfLevel && shelfLevel !== null) {
+      whereParts.push('l.shelf_level = ?');
+      values.push(shelfLevel);
+    }
+
+    const joinClause = hasItemLocation
+      ? 'LEFT JOIN items i ON i.location_id = l.id'
+      : 'LEFT JOIN items i ON 1 = 0';
+
+    const [rows] = await db.query(
+      `SELECT ${selectParts.join(', ')}
+       FROM locations l
+       ${joinClause}
+       WHERE ${whereParts.join(' AND ')}
+       ORDER BY ${locationCapabilities.hasShelfLevel ? 'l.shelf_level ASC,' : ''} l.id ASC, i.name ASC`,
+      values
+    );
+
+    const locationsMap = new Map();
+
+    for (const row of rows) {
+      if (!locationsMap.has(row.location_id)) {
+        locationsMap.set(row.location_id, {
+          location_id: row.location_id,
+          location_name: row.location_name,
+          location_description: row.location_description,
+          row_num: row.row_num,
+          col_num: row.col_num,
+          shelf_level: row.shelf_level,
+          is_xl: row.is_xl,
+          is_active: row.is_active,
+          items: [],
+        });
+      }
+
+      if (row.item_id !== null && row.item_id !== undefined) {
+        locationsMap.get(row.location_id).items.push({
+          id: row.item_id,
+          name: row.item_name,
+          barcode: row.item_barcode,
+          quantity: row.item_quantity,
+        });
+      }
+    }
+
+    return res.json(Array.from(locationsMap.values()));
+  } catch (err) {
+    console.error('❌ Error fetching rack view by position:', err.message);
+    return res.status(500).json({ message: 'Database error' });
   }
 });
 

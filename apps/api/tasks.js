@@ -1,7 +1,89 @@
 const db = require('./db');
 const { sortItemsBySerpentineRoute } = require('./wms');
 
-const TASK_SELECT = `
+const taskSchemaCache = {
+  userIsActiveSelectExpr: null,
+  hasInventoryTable: null,
+};
+
+async function tableHasColumn(tableName, columnName) {
+  try {
+    const [rows] = await db.query(
+      `SELECT 1
+       FROM information_schema.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE()
+         AND TABLE_NAME = ?
+         AND LOWER(COLUMN_NAME) = LOWER(?)
+       LIMIT 1`,
+      [tableName, columnName]
+    );
+
+    return rows.length > 0;
+  } catch (_error) {
+    return false;
+  }
+}
+
+async function tableExists(tableName) {
+  try {
+    const [rows] = await db.query(
+      `SELECT 1
+       FROM information_schema.TABLES
+       WHERE TABLE_SCHEMA = DATABASE()
+         AND TABLE_NAME = ?
+       LIMIT 1`,
+      [tableName]
+    );
+
+    return rows.length > 0;
+  } catch (_error) {
+    return false;
+  }
+}
+
+async function getUserIsActiveSelectExpr() {
+  if (taskSchemaCache.userIsActiveSelectExpr) {
+    return taskSchemaCache.userIsActiveSelectExpr;
+  }
+
+  const [hasSnakeCaseColumn, hasCamelCaseColumn] = await Promise.all([
+    tableHasColumn('users', 'is_active'),
+    tableHasColumn('users', 'isActive'),
+  ]);
+
+  if (hasSnakeCaseColumn) {
+    taskSchemaCache.userIsActiveSelectExpr = 'u.is_active';
+  } else if (hasCamelCaseColumn) {
+    taskSchemaCache.userIsActiveSelectExpr = 'u.isActive';
+  } else {
+    taskSchemaCache.userIsActiveSelectExpr = '1';
+  }
+
+  return taskSchemaCache.userIsActiveSelectExpr;
+}
+
+async function getTaskSelectQuery() {
+  const userIsActiveSelectExpr = await getUserIsActiveSelectExpr();
+  if (taskSchemaCache.hasInventoryTable === null) {
+    taskSchemaCache.hasInventoryTable = await tableExists('inventory');
+  }
+
+  const locationJoinClause = taskSchemaCache.hasInventoryTable
+    ? `LEFT JOIN inventory inv ON inv.item_id = ti.item_id
+    AND inv.location_id = (
+      SELECT inv2.location_id
+      FROM inventory inv2
+      INNER JOIN locations l2 ON l2.id = inv2.location_id
+      WHERE inv2.item_id = ti.item_id
+        AND COALESCE(inv2.quantity, 0) > 0
+        AND l2.is_active = 1
+      ORDER BY l2.row_num ASC, l2.col_num ASC, l2.shelf_level ASC, inv2.location_id ASC
+      LIMIT 1
+    )
+  LEFT JOIN locations l ON l.id = inv.location_id`
+    : 'LEFT JOIN locations l ON l.id = i.location_id';
+
+  return `
   SELECT
     t.id AS task_id,
     t.name AS task_name,
@@ -16,7 +98,7 @@ const TASK_SELECT = `
     u.id AS user_id,
     u.email AS user_email,
     u.role AS user_role,
-    u.is_active AS user_is_active,
+    ${userIsActiveSelectExpr} AS user_is_active,
     u.last_login AS user_last_login,
     ti.id AS task_item_id,
     ti.task_id AS task_item_task_id,
@@ -43,20 +125,10 @@ const TASK_SELECT = `
   LEFT JOIN task_items ti ON ti.task_id = t.id
   LEFT JOIN items i ON ti.item_id = i.id
   LEFT JOIN categories c ON i.category_id = c.id
-  LEFT JOIN inventory inv ON inv.item_id = ti.item_id
-    AND inv.location_id = (
-      SELECT inv2.location_id
-      FROM inventory inv2
-      INNER JOIN locations l2 ON l2.id = inv2.location_id
-      WHERE inv2.item_id = ti.item_id
-        AND COALESCE(inv2.quantity, 0) > 0
-        AND l2.is_active = 1
-      ORDER BY l2.row_num ASC, l2.col_num ASC, l2.shelf_level ASC, inv2.location_id ASC
-      LIMIT 1
-    )
-  LEFT JOIN locations l ON l.id = inv.location_id
+  ${locationJoinClause}
   LEFT JOIN users u ON u.id = t.assigned_user
 `;
+}
 
 function buildTaskAccessParams(userEmail, userId, userRole) {
   const normalizedEmail = typeof userEmail === 'string' ? userEmail.trim() : '';
@@ -154,9 +226,10 @@ function hydrateTasks(rows) {
 
 async function getTasksForUser(userEmail, userId = null, userRole = null) {
   const accessParams = buildTaskAccessParams(userEmail, userId, userRole);
+  const taskSelectQuery = await getTaskSelectQuery();
 
   const [rows] = await db.query(
-    `${TASK_SELECT}
+    `${taskSelectQuery}
      WHERE (
        ? IN ('admin', 'supervisor')
        OR (? IS NOT NULL AND t.assigned_user = ?)
@@ -172,9 +245,10 @@ async function getTasksForUser(userEmail, userId = null, userRole = null) {
 
 async function getTaskByIdForUser(taskId, userEmail, userId = null, userRole = null) {
   const accessParams = buildTaskAccessParams(userEmail, userId, userRole);
+  const taskSelectQuery = await getTaskSelectQuery();
 
   const [rows] = await db.query(
-    `${TASK_SELECT}
+    `${taskSelectQuery}
      WHERE t.id = ?
        AND (
          ? IN ('admin', 'supervisor')
