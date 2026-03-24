@@ -32,19 +32,19 @@
   - [x] TODO: Wire create-task API call with validation and user feedback
   - [x] TODO: Add offline fallback behavior for task creation
 
-- [ ] TODO[P1][MOBILE]: Implement `app/edit.tsx` item edit/load behavior
-  - [ ] TODO: Load item by scanned barcode from local cache/API
-  - [ ] TODO: Support create-vs-edit decision flow
-  - [ ] TODO: Save updates through API + sync queue
+- [x] TODO[P1][MOBILE]: Implement `app/edit.tsx` item edit/load behavior
+  - [x] TODO: Load item by scanned barcode from local cache/API
+  - [x] TODO: Support create-vs-edit decision flow
+  - [x] TODO: Save updates through API + sync queue
 
-- [ ] TODO[P2][MOBILE]: Tighten sync queue semantics in `src/services/sync.ts`
+- [x] TODO[P2][MOBILE]: Tighten sync queue semantics in `src/services/sync.ts`
   - [x] FIXME: Local task-status updates no longer enqueue unsupported `task` operations
   - [x] TODO: Add explicit handlers or prevent enqueueing unsupported operation types
-  - [ ] TODO: Add dead-letter handling for repeatedly failing queue items
+  - [x] TODO: Add dead-letter handling for repeatedly failing queue items
 
-- [ ] TODO[P2][MOBILE]: Data mapping cleanup
-  - [ ] FIXME: `database.ts` currently stores `assigned_user_data: null` only
-  - [ ] TODO: Persist/hydrate assignee metadata when provided by API
+- [x] TODO[P2][MOBILE]: Data mapping cleanup
+  - [x] FIXME: `database.ts` currently stores `assigned_user_data: null` only
+  - [x] TODO: Persist/hydrate assignee metadata when provided by API
   - [x] TODO: Verify category/location field mapping in joined task item rows — fixed aliased column conflict in `database.ts` `getTasks`/`getTaskById`
 
 ## OTHER APPS — API + WEB

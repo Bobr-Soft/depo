@@ -8,6 +8,8 @@ import { logout, reauthenticateSilently } from './auth';
 
 let isSyncing = false;
 let activeSyncPromise: Promise<{ success: boolean; tasks?: TaskComplete[]; error?: string }> | null = null;
+const MAX_SYNC_RETRY_COUNT = 5;
+let isSyncServiceInitialized = false;
 
 class ApiSyncError extends Error {
   statusCode: number;
@@ -25,7 +27,8 @@ function isNonRetryableStatus(statusCode: number): boolean {
 
 type InboundItemUpsertPayload = {
   barcode: string;
-  quantityIncrement: number;
+  quantityIncrement?: number;
+  quantity?: number;
   name?: string;
   description?: string | null;
   category_id?: number | null;
@@ -68,6 +71,20 @@ function getBackoffDelay(attempt: number): number {
  */
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = API_TIMEOUT): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 /**
@@ -312,12 +329,18 @@ async function upsertInboundItem(
   }
 
   const quantityIncrement = Math.max(1, Math.floor(payload.quantityIncrement || 1));
+  const explicitQuantity = payload.quantity != null ? Math.max(0, Math.floor(payload.quantity)) : null;
 
-  const listResponse = await fetch(buildApiUrl(apiUrl, '/items'), {
+  const listResponse = await fetchWithTimeout(buildApiUrl(apiUrl, '/items'), {
     headers: {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
     },
+  }).catch((error) => {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error(`Timed out fetching items for inbound sync after ${API_TIMEOUT}ms`);
+    }
+    throw error;
   });
 
   if (!listResponse.ok) {
@@ -334,8 +357,8 @@ async function upsertInboundItem(
     : null;
 
   if (existingItem) {
-    const updatedQuantity = Math.max(0, Number(existingItem.quantity || 0)) + quantityIncrement;
-    const updateResponse = await fetch(buildApiUrl(apiUrl, `/items/${existingItem.id}`), {
+    const updatedQuantity = explicitQuantity ?? (Math.max(0, Number(existingItem.quantity || 0)) + quantityIncrement);
+    const updateResponse = await fetchWithTimeout(buildApiUrl(apiUrl, `/items/${existingItem.id}`), {
       method: 'PUT',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -349,6 +372,11 @@ async function upsertInboundItem(
         category_id: existingItem.category_id ?? payload.category_id ?? null,
         location_id: existingItem.location_id ?? payload.location_id ?? null,
       }),
+    }).catch((error) => {
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error(`Timed out updating item ${existingItem.id} after ${API_TIMEOUT}ms`);
+      }
+      throw error;
     });
 
     if (!updateResponse.ok) {
@@ -362,7 +390,7 @@ async function upsertInboundItem(
     return;
   }
 
-  const createResponse = await fetch(buildApiUrl(apiUrl, '/items'), {
+  const createResponse = await fetchWithTimeout(buildApiUrl(apiUrl, '/items'), {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -372,10 +400,15 @@ async function upsertInboundItem(
       name: payload.name ?? `Beolvasott termék ${barcode}`,
       barcode,
       description: payload.description ?? null,
-      quantity: quantityIncrement,
+      quantity: explicitQuantity ?? quantityIncrement,
       category_id: payload.category_id ?? null,
       location_id: payload.location_id ?? null,
     }),
+  }).catch((error) => {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error(`Timed out creating item for barcode ${barcode} after ${API_TIMEOUT}ms`);
+    }
+    throw error;
   });
 
   if (!createResponse.ok) {
@@ -401,24 +434,51 @@ async function pushSyncQueue(token: string, apiUrl: string): Promise<void> {
   for (const operation of queue) {
     try {
       const payload = JSON.parse(operation.payload);
+      const nextAttempt = (operation.retry_count ?? 0) + 1;
 
       if (operation.entity_type === 'task' && operation.operation === 'CREATE') {
-        const response = await fetch(buildApiUrl(apiUrl, '/tasks'), {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(payload as TaskCreateQueuePayload),
-        });
+        try {
+          const response = await fetchWithTimeout(buildApiUrl(apiUrl, '/tasks'), {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload as TaskCreateQueuePayload),
+          }).catch((error) => {
+            if (error instanceof Error && error.name === 'AbortError') {
+              throw new Error(`Timed out creating task from sync queue after ${API_TIMEOUT}ms`);
+            }
+            throw error;
+          });
 
-        if (!response.ok) {
-          const errorText = await response.text().catch(() => 'Unknown error');
-          throw new ApiSyncError(response.status, `API error: ${response.status} - ${errorText}`);
+          if (!response.ok) {
+            const errorText = await response.text().catch(() => 'Unknown error');
+            throw new ApiSyncError(response.status, `API error: ${response.status} - ${errorText}`);
+          }
+
+          console.log(`✅ Synced task create operation ${operation.id}`);
+          await db.removeSyncOperation(operation.id);
+        } catch (apiError) {
+          if (apiError instanceof ApiSyncError && isNonRetryableStatus(apiError.statusCode)) {
+            await db.moveSyncOperationToDeadLetter(operation.id, db.DEAD_LETTER_REASONS.nonRetryableStatus, {
+              statusCode: apiError.statusCode,
+              message: apiError.message,
+              attempt: nextAttempt,
+            });
+            continue;
+          }
+
+          if (nextAttempt >= MAX_SYNC_RETRY_COUNT) {
+            await db.moveSyncOperationToDeadLetter(operation.id, db.DEAD_LETTER_REASONS.maxRetriesExceeded, {
+              message: apiError instanceof Error ? apiError.message : 'Unknown error',
+              attempt: nextAttempt,
+            });
+            continue;
+          }
+
+          await db.incrementSyncRetry(operation.id);
         }
-
-        console.log(`✅ Synced task create operation ${operation.id}`);
-        await db.removeSyncOperation(operation.id);
       } else if (operation.entity_type === 'task_item' && operation.operation === 'UPDATE') {
         const { picked_quantity } = payload;
         const taskItemId = operation.entity_id;
@@ -427,7 +487,10 @@ async function pushSyncQueue(token: string, apiUrl: string): Promise<void> {
 
         if (!taskItemDetails) {
           console.warn(`Task item ${taskItemId} not found, removing from queue`);
-          await db.removeSyncOperation(operation.id);
+          await db.moveSyncOperationToDeadLetter(operation.id, db.DEAD_LETTER_REASONS.unsupportedOperation, {
+            reason: 'TASK_ITEM_NOT_FOUND',
+            taskItemId,
+          });
           continue;
         }
 
@@ -465,15 +528,24 @@ async function pushSyncQueue(token: string, apiUrl: string): Promise<void> {
         } catch (apiError) {
           clearTimeout(timeoutId);
           if (apiError instanceof ApiSyncError && isNonRetryableStatus(apiError.statusCode)) {
-            console.warn(
-              `Skipping non-retryable task_item operation ${operation.id}: ${apiError.message}`
-            );
-            await db.removeSyncOperation(operation.id);
+            await db.moveSyncOperationToDeadLetter(operation.id, db.DEAD_LETTER_REASONS.nonRetryableStatus, {
+              statusCode: apiError.statusCode,
+              message: apiError.message,
+              attempt: nextAttempt,
+            });
+            continue;
+          }
+
+          if (nextAttempt >= MAX_SYNC_RETRY_COUNT) {
+            await db.moveSyncOperationToDeadLetter(operation.id, db.DEAD_LETTER_REASONS.maxRetriesExceeded, {
+              message: apiError instanceof Error ? apiError.message : 'Unknown error',
+              attempt: nextAttempt,
+            });
             continue;
           }
 
           console.warn(
-            `⚠️  Failed to push operation ${operation.id} (attempt ${operation.retry_count + 1}):`,
+            `⚠️  Failed to push operation ${operation.id} (attempt ${nextAttempt}):`,
             apiError instanceof Error ? apiError.message : 'Unknown error'
           );
           await db.incrementSyncRetry(operation.id);
@@ -485,26 +557,40 @@ async function pushSyncQueue(token: string, apiUrl: string): Promise<void> {
           await db.removeSyncOperation(operation.id);
         } catch (apiError) {
           if (apiError instanceof ApiSyncError && isNonRetryableStatus(apiError.statusCode)) {
-            console.warn(
-              `Skipping non-retryable inbound operation ${operation.id}: ${apiError.message}`
-            );
-            await db.removeSyncOperation(operation.id);
+            await db.moveSyncOperationToDeadLetter(operation.id, db.DEAD_LETTER_REASONS.nonRetryableStatus, {
+              statusCode: apiError.statusCode,
+              message: apiError.message,
+              attempt: nextAttempt,
+            });
+            continue;
+          }
+
+          if (nextAttempt >= MAX_SYNC_RETRY_COUNT) {
+            await db.moveSyncOperationToDeadLetter(operation.id, db.DEAD_LETTER_REASONS.maxRetriesExceeded, {
+              message: apiError instanceof Error ? apiError.message : 'Unknown error',
+              attempt: nextAttempt,
+            });
             continue;
           }
 
           console.warn(
-            `⚠️  Failed to sync inbound item operation ${operation.id} (attempt ${operation.retry_count + 1}):`,
+            `⚠️  Failed to sync inbound item operation ${operation.id} (attempt ${nextAttempt}):`,
             apiError instanceof Error ? apiError.message : 'Unknown error'
           );
           await db.incrementSyncRetry(operation.id);
         }
       } else {
         console.warn(`Unsupported sync operation: ${operation.entity_type} ${operation.operation}`);
-        await db.removeSyncOperation(operation.id);
+        await db.moveSyncOperationToDeadLetter(operation.id, db.DEAD_LETTER_REASONS.unsupportedOperation, {
+          operation: operation.operation,
+          entityType: operation.entity_type,
+        });
       }
     } catch (parseError) {
       console.error(`Failed to parse sync operation ${operation.id}:`, parseError);
-      await db.removeSyncOperation(operation.id);
+      await db.moveSyncOperationToDeadLetter(operation.id, db.DEAD_LETTER_REASONS.parseError, {
+        message: parseError instanceof Error ? parseError.message : String(parseError),
+      });
     }
   }
 }
@@ -720,6 +806,7 @@ export async function getSyncStatus(): Promise<{
   isOnline: boolean;
   lastSyncTime: number | null;
   pendingOperations: number;
+  deadLetterOperations: number;
 }> {
   const online = await isOnline();
 
@@ -729,17 +816,20 @@ export async function getSyncStatus(): Promise<{
       isOnline: online,
       lastSyncTime: null,
       pendingOperations: 0,
+      deadLetterOperations: 0,
     };
   }
 
   const lastSync = await db.getLastSyncTime();
   const queue = await db.getSyncQueue();
+  const deadLetterOperations = await db.getDeadLetterCount();
 
   return {
     isSyncing,
     isOnline: online,
     lastSyncTime: lastSync,
     pendingOperations: queue.length,
+    deadLetterOperations,
   };
 }
 
@@ -747,9 +837,14 @@ export async function getSyncStatus(): Promise<{
  * Initialize sync service
  */
 export async function initializeSyncService(): Promise<void> {
+  if (isSyncServiceInitialized) {
+    return;
+  }
+
   try {
     await db.initDatabase();
     startAutoSync();
+    isSyncServiceInitialized = true;
     console.log('Sync service initialized');
   } catch (error) {
     console.error('Failed to initialize sync service:', error);
@@ -763,6 +858,7 @@ export async function initializeSyncService(): Promise<void> {
 export async function cleanupSyncService(): Promise<void> {
   stopAutoSync();
   await db.clearDatabase();
+  isSyncServiceInitialized = false;
   console.log('Sync service cleaned up');
 }
 
