@@ -19,7 +19,7 @@
  * ```
  */
 
-import { useColorScheme } from '@/hooks';
+import { useColorScheme } from '@/hooks/useColorScheme';
 
 /**
  * Header color configuration for light and dark modes

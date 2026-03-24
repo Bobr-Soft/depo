@@ -7,6 +7,49 @@ let db: SQLite.SQLiteDatabase | null = null;
 let isInitialized = false;
 let initPromise: Promise<void> | null = null;
 
+const DEAD_LETTER_REASONS = {
+  maxRetriesExceeded: 'MAX_RETRIES_EXCEEDED',
+  nonRetryableStatus: 'NON_RETRYABLE_STATUS',
+  parseError: 'PARSE_ERROR',
+  unsupportedOperation: 'UNSUPPORTED_OPERATION',
+} as const;
+
+export type DeadLetterReason = (typeof DEAD_LETTER_REASONS)[keyof typeof DEAD_LETTER_REASONS];
+
+function toEpoch(value: Date | string | number | null | undefined): number | null {
+  if (value == null) {
+    return null;
+  }
+
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function hydrateAssignedUser(taskRow: any) {
+  if (
+    taskRow.assigned_user == null ||
+    !taskRow.assigned_user_email ||
+    !taskRow.assigned_user_role ||
+    taskRow.assigned_user_is_active == null
+  ) {
+    return null;
+  }
+
+  return {
+    id: taskRow.assigned_user,
+    email: taskRow.assigned_user_email,
+    role: taskRow.assigned_user_role,
+    is_active: taskRow.assigned_user_is_active === 1,
+    last_login: taskRow.assigned_user_last_login
+      ? new Date(taskRow.assigned_user_last_login)
+      : null,
+  };
+}
+
 /**
  * Initialize database and create tables
  */
@@ -56,12 +99,32 @@ export async function initDatabase(): Promise<void> {
         type TEXT NOT NULL,
         source_id TEXT,
         assigned_user INTEGER,
+        assigned_user_email TEXT,
+        assigned_user_role TEXT,
+        assigned_user_is_active INTEGER,
+        assigned_user_last_login INTEGER,
         status TEXT NOT NULL,
         priority INTEGER NOT NULL,
         deadline INTEGER,
         updated_at INTEGER NOT NULL,
         created_at INTEGER NOT NULL,
         synced INTEGER DEFAULT 1
+      );
+
+      -- Dead-letter queue for failed sync operations
+      CREATE TABLE IF NOT EXISTS dead_letter_queue (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        original_sync_operation_id INTEGER,
+        operation TEXT NOT NULL,
+        entity_type TEXT NOT NULL,
+        entity_id INTEGER,
+        payload TEXT NOT NULL,
+        failure_reason TEXT NOT NULL,
+        failure_details TEXT,
+        original_created_at INTEGER NOT NULL,
+        moved_to_dead_letter_at INTEGER NOT NULL,
+        final_retry_count INTEGER DEFAULT 0,
+        FOREIGN KEY (original_sync_operation_id) REFERENCES sync_queue(id) ON DELETE SET NULL
       );
 
       -- Task items table
@@ -114,7 +177,15 @@ export async function initDatabase(): Promise<void> {
       CREATE INDEX IF NOT EXISTS idx_tasks_assigned_user ON tasks(assigned_user);
       CREATE INDEX IF NOT EXISTS idx_task_items_task_id ON task_items(task_id);
       CREATE INDEX IF NOT EXISTS idx_sync_queue_created_at ON sync_queue(created_at);
+      CREATE INDEX IF NOT EXISTS idx_dead_letter_failure_reason ON dead_letter_queue(failure_reason);
+      CREATE INDEX IF NOT EXISTS idx_dead_letter_created_at ON dead_letter_queue(moved_to_dead_letter_at);
     `);
+
+      // Ensure additive columns exist in already-created databases.
+      await db.runAsync('ALTER TABLE tasks ADD COLUMN assigned_user_email TEXT').catch(() => undefined);
+      await db.runAsync('ALTER TABLE tasks ADD COLUMN assigned_user_role TEXT').catch(() => undefined);
+      await db.runAsync('ALTER TABLE tasks ADD COLUMN assigned_user_is_active INTEGER').catch(() => undefined);
+      await db.runAsync('ALTER TABLE tasks ADD COLUMN assigned_user_last_login INTEGER').catch(() => undefined);
 
     isInitialized = true;
     console.log('Database initialized successfully');
@@ -196,19 +267,23 @@ export async function saveTasks(tasks: TaskComplete[]): Promise<void> {
         // Insert or replace task
         await database.runAsync(
           `INSERT OR REPLACE INTO tasks
-           (id, name, type, source_id, assigned_user, status, priority, deadline, updated_at, created_at, synced)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+           (id, name, type, source_id, assigned_user, assigned_user_email, assigned_user_role, assigned_user_is_active, assigned_user_last_login, status, priority, deadline, updated_at, created_at, synced)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
           [
             task.id,
             task.name,
             task.type,
             task.source_id,
             task.assigned_user,
+            task.assigned_user_data?.email ?? null,
+            task.assigned_user_data?.role ?? null,
+            task.assigned_user_data == null ? null : task.assigned_user_data.is_active ? 1 : 0,
+            toEpoch(task.assigned_user_data?.last_login),
             taskStatus,
             task.priority,
-            task.deadline ? new Date(task.deadline).getTime() : null,
-            new Date(task.updated_at).getTime(),
-            new Date(task.created_at).getTime(),
+            toEpoch(task.deadline),
+            toEpoch(task.updated_at),
+            toEpoch(task.created_at),
           ]
         );
 
@@ -356,7 +431,7 @@ export async function getTasks(): Promise<TaskComplete[]> {
         deadline: task.deadline ? new Date(task.deadline) : null,
         updated_at: new Date(task.updated_at),
         created_at: new Date(task.created_at),
-        assigned_user_data: null, // TODO: Add user data if needed
+        assigned_user_data: hydrateAssignedUser(task),
         items,
       });
     }
@@ -439,7 +514,7 @@ export async function getTaskById(id: number): Promise<TaskComplete | null> {
       deadline: task.deadline ? new Date(task.deadline) : null,
       updated_at: new Date(task.updated_at),
       created_at: new Date(task.created_at),
-      assigned_user_data: null,
+      assigned_user_data: hydrateAssignedUser(task),
       items,
     };
   } catch (error) {
@@ -594,6 +669,69 @@ export async function incrementSyncRetry(id: number): Promise<void> {
     console.error('Failed to increment sync retry:', error);
   }
 }
+
+/**
+ * Move a failed sync operation to dead-letter queue and remove from active queue.
+ */
+export async function moveSyncOperationToDeadLetter(
+  id: number,
+  reason: DeadLetterReason,
+  details?: Record<string, unknown>
+): Promise<void> {
+  const database = getDb();
+
+  try {
+    await database.withTransactionAsync(async () => {
+      const operation = await database.getFirstAsync<any>(
+        'SELECT * FROM sync_queue WHERE id = ?',
+        [id]
+      );
+
+      if (!operation) {
+        return;
+      }
+
+      await database.runAsync(
+        `INSERT INTO dead_letter_queue
+         (original_sync_operation_id, operation, entity_type, entity_id, payload, failure_reason, failure_details, original_created_at, moved_to_dead_letter_at, final_retry_count)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          operation.id,
+          operation.operation,
+          operation.entity_type,
+          operation.entity_id,
+          operation.payload,
+          reason,
+          JSON.stringify(details ?? {}),
+          operation.created_at,
+          Date.now(),
+          operation.retry_count ?? 0,
+        ]
+      );
+
+      await database.runAsync('DELETE FROM sync_queue WHERE id = ?', [id]);
+    });
+  } catch (error) {
+    console.error('Failed to move sync operation to dead-letter queue:', error);
+    throw error;
+  }
+}
+
+export async function getDeadLetterCount(): Promise<number> {
+  const database = getDb();
+
+  try {
+    const result = await database.getFirstAsync<{ count: number }>(
+      'SELECT COUNT(*) AS count FROM dead_letter_queue'
+    );
+    return result?.count ?? 0;
+  } catch (error) {
+    console.error('Failed to get dead-letter count:', error);
+    return 0;
+  }
+}
+
+export { DEAD_LETTER_REASONS };
 
 /**
  * Add a sync operation to the queue

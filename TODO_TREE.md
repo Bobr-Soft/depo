@@ -12,9 +12,9 @@
   - [x] TODO: Persist failures to offline queue and show retry state
   - [x] TODO: Show success/failure summary after batch save
 
-- [ ] TODO[P0][MOBILE]: Fix picking completion consistency in `app/picking/[id].tsx` and `src/components/api.ts`
-  - [ ] BUG: `loadTask()` reads cached data (`getTasksWithSync`) and may show stale status right after pick
-  - [ ] TODO: After successful `taskItemPicked`, force server refresh for that task (or optimistic local recompute)
+- [x] TODO[P0][MOBILE]: Fix picking completion consistency in `app/picking/[id].tsx` and `src/components/api.ts`
+  - [x] BUG: `loadTask()` reads cached data (`getTasksWithSync`) and may show stale status right after pick
+  - [x] TODO: After successful `taskItemPicked`, force server refresh for that task (or optimistic local recompute)
   - [x] TODO: Ensure task status transitions to `completed` immediately in UI when last item is picked — `markItemAsPicked` in `database.ts` recomputes and persists task status
 
 - [x] TODO[P0][MOBILE]: Fix completed-item edit path to keep task lifecycle consistent
@@ -26,31 +26,31 @@
   - [x] TODO: Apply same status grouping/sorting logic in `app/picking/index.tsx` as `app/(tabs)/items.tsx`
   - [x] TODO: Confirm completed tasks visibility/filter policy is explicit and consistent
 
-- [ ] TODO[P1][MOBILE]: Implement `app/picking/new.tsx` end-to-end
-  - [ ] NOTE: Current screen already supports taking unassigned tasks; remaining gap is real task creation or route/UX clarification
-  - [ ] TODO: Add form fields (name/source/priority/deadline/items)
-  - [ ] TODO: Wire create-task API call with validation and user feedback
-  - [ ] TODO: Add offline fallback behavior for task creation
+- [x] TODO[P1][MOBILE]: Implement `app/picking/new.tsx` end-to-end
+  - [x] NOTE: Current screen already supports taking unassigned tasks; remaining gap is real task creation or route/UX clarification
+  - [x] TODO: Add form fields (name/source/priority/deadline/items)
+  - [x] TODO: Wire create-task API call with validation and user feedback
+  - [x] TODO: Add offline fallback behavior for task creation
 
-- [ ] TODO[P1][MOBILE]: Implement `app/edit.tsx` item edit/load behavior
-  - [ ] TODO: Load item by scanned barcode from local cache/API
-  - [ ] TODO: Support create-vs-edit decision flow
-  - [ ] TODO: Save updates through API + sync queue
+- [x] TODO[P1][MOBILE]: Implement `app/edit.tsx` item edit/load behavior
+  - [x] TODO: Load item by scanned barcode from local cache/API
+  - [x] TODO: Support create-vs-edit decision flow
+  - [x] TODO: Save updates through API + sync queue
 
-- [ ] TODO[P2][MOBILE]: Tighten sync queue semantics in `src/services/sync.ts`
+- [x] TODO[P2][MOBILE]: Tighten sync queue semantics in `src/services/sync.ts`
   - [x] FIXME: Local task-status updates no longer enqueue unsupported `task` operations
   - [x] TODO: Add explicit handlers or prevent enqueueing unsupported operation types
-  - [ ] TODO: Add dead-letter handling for repeatedly failing queue items
+  - [x] TODO: Add dead-letter handling for repeatedly failing queue items
 
-- [ ] TODO[P2][MOBILE]: Data mapping cleanup
-  - [ ] FIXME: `database.ts` currently stores `assigned_user_data: null` only
-  - [ ] TODO: Persist/hydrate assignee metadata when provided by API
+- [x] TODO[P2][MOBILE]: Data mapping cleanup
+  - [x] FIXME: `database.ts` currently stores `assigned_user_data: null` only
+  - [x] TODO: Persist/hydrate assignee metadata when provided by API
   - [x] TODO: Verify category/location field mapping in joined task item rows — fixed aliased column conflict in `database.ts` `getTasks`/`getTaskById`
 
 ## OTHER APPS — API + WEB
 
 - [ ] TODO[P0][API]: Expand task domain API beyond read + picked update
-  - [ ] TODO: Add `POST /tasks` for task creation
+  - [x] TODO: Add `POST /tasks` for task creation
   - [ ] TODO: Add task assignment/accept endpoints (`assign`, `accept`, `unassign`)
   - [ ] TODO: Add explicit task status update endpoint with validation/state machine
 

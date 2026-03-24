@@ -119,6 +119,21 @@ export async function adminGetItems(): Promise<ApiItem[]> {
   return res.json();
 }
 
+function normalizeBarcode(value: string | null | undefined): string {
+  return (value ?? '').trim().replace(/\s+/g, '').toLowerCase();
+}
+
+export async function adminGetItemByBarcode(barcode: string): Promise<ApiItem | null> {
+  const normalizedBarcode = normalizeBarcode(barcode);
+  if (!normalizedBarcode) {
+    return null;
+  }
+
+  const items = await adminGetItems();
+  const match = items.find((item) => normalizeBarcode(item.barcode) === normalizedBarcode);
+  return match ?? null;
+}
+
 export async function adminUpdateItem(
   id: number,
   data: Partial<Omit<ApiItem, 'id' | 'category' | 'location'>>
@@ -218,8 +233,13 @@ export interface CreateTaskInput {
   name: string;
   type: 'picking' | 'inbound' | 'transfer';
   priority: number;
+  source_id?: string | null;
   deadline?: string | null;
   assigned_user?: number | null;
+  items?: Array<{
+    item_id: number;
+    requested_quantity: number;
+  }>;
 }
 
 export async function adminCreateTask(data: CreateTaskInput): Promise<TaskComplete> {

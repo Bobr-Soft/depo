@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import * as Network from 'expo-network';
 import { getSyncStatus, syncData } from '@/services/sync';
+import { isDatabaseInitialized } from '@/services/database';
 
 export interface SyncStatus {
   isSyncing: boolean;
@@ -86,16 +87,40 @@ export function useNetworkStatus() {
 export function useAutoSync() {
   const isOnline = useNetworkStatus();
   const [wasOffline, setWasOffline] = useState(false);
+  const lastTriggerAtRef = useRef(0);
+
+  const RECONNECT_SYNC_COOLDOWN_MS = 10000;
 
   useEffect(() => {
     if (!isOnline) {
       setWasOffline(true);
     } else if (wasOffline) {
-      // Just came back online, trigger sync
-      console.log('Network reconnected, triggering sync...');
-      syncData().catch((error) => {
-        console.error('Auto-sync on reconnection failed:', error);
-      });
+      const now = Date.now();
+      const onCooldown = now - lastTriggerAtRef.current < RECONNECT_SYNC_COOLDOWN_MS;
+      if (onCooldown) {
+        setWasOffline(false);
+        return;
+      }
+
+      if (!isDatabaseInitialized()) {
+        setWasOffline(false);
+        return;
+      }
+
+      getSyncStatus()
+        .then((status) => {
+          if (status.isSyncing) {
+            return;
+          }
+
+          console.log('Network reconnected, triggering sync...');
+          lastTriggerAtRef.current = Date.now();
+          return syncData();
+        })
+        .catch((error) => {
+          console.error('Auto-sync on reconnection failed:', error);
+        });
+
       setWasOffline(false);
     }
   }, [isOnline, wasOffline]);
