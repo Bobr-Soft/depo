@@ -59,7 +59,7 @@ interface PositionLocationRow {
 
 const GRID_SIZE = 4;
 const CELL_SIZE = 86;
-const DISPLAY_SHELF_LEVELS = [4, 3, 2, 1];
+const DISPLAY_SHELF_LEVELS = [3, 2, 1, 0];
 const MAX_ITEMS_PER_SHELF = 5;
 const MAX_ITEMS_PER_RACK = 20;
 
@@ -314,7 +314,7 @@ export default function ManageLocationsPage() {
       }).length;
 
       if (!sameShelfMove && targetShelfCount >= MAX_ITEMS_PER_SHELF) {
-        const displayShelf = useZeroBasedShelf ? targetShelf + 1 : targetShelf;
+        const displayShelf = useZeroBasedShelf ? targetShelf : Math.max(0, targetShelf - 1);
         setWarningMessage(`A cel polc (${displayShelf}. szint) megtelt. Maximum ${MAX_ITEMS_PER_SHELF} item lehet polconkent.`);
         return false;
       }
@@ -591,7 +591,7 @@ export default function ManageLocationsPage() {
     col: number,
     displayShelfLevel: number
   ) => {
-    const targetRawShelf = useZeroBasedShelf ? displayShelfLevel - 1 : displayShelfLevel;
+    const targetRawShelf = useZeroBasedShelf ? displayShelfLevel : displayShelfLevel + 1;
 
     const localCandidates = getLocationsByRack(row, col)
       .filter((location) => getShelfLevel(location) === targetRawShelf)
@@ -764,7 +764,7 @@ export default function ManageLocationsPage() {
                 )}
 
                 {shelfLevels.map((level, shelfIndex) => {
-                  const rawLevel = useZeroBasedShelf ? level - 1 : level;
+                  const rawLevel = useZeroBasedShelf ? level : level + 1;
                   const shelfLocations = rackLocations.filter((location) => num(location.shelf_level, 0) === rawLevel);
                   const shelfItems = shelfLocations.flatMap((location) => location.items);
                   const shelfVisibleItems = shelfLocations.flatMap((location) => location.items.filter(itemMatchesSearch));
