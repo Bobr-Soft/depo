@@ -40,6 +40,14 @@ jobs:
           corepack enable
           yarn install --immutable
 
+      - name: Create Mobile .env File
+        working-directory: apps/mobile
+        run: |
+          echo "EXPO_PUBLIC_API_URL=${{ secrets.EXPO_PUBLIC_API_URL }}" >> .env
+          echo "EXPO_PUBLIC_AZURE_CLIENT_ID=${{ secrets.EXPO_PUBLIC_AZURE_CLIENT_ID }}" >> .env
+          echo "EXPO_PUBLIC_AZURE_TENANT_ID=${{ secrets.EXPO_PUBLIC_AZURE_TENANT_ID }}" >> .env
+          echo "EXPO_PUBLIC_AZURE_REDIRECT_URI=${{ secrets.EXPO_PUBLIC_AZURE_REDIRECT_URI }}" >> .env
+
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
@@ -85,6 +93,14 @@ jobs:
         run: |
           corepack enable
           yarn install --immutable
+
+      - name: Create Mobile .env File
+        working-directory: apps/mobile
+        run: |
+          echo "EXPO_PUBLIC_API_URL=${{ secrets.EXPO_PUBLIC_API_URL }}" >> .env
+          echo "EXPO_PUBLIC_AZURE_CLIENT_ID=${{ secrets.EXPO_PUBLIC_AZURE_CLIENT_ID }}" >> .env
+          echo "EXPO_PUBLIC_AZURE_TENANT_ID=${{ secrets.EXPO_PUBLIC_AZURE_TENANT_ID }}" >> .env
+          echo "EXPO_PUBLIC_AZURE_REDIRECT_URI=${{ secrets.EXPO_PUBLIC_AZURE_REDIRECT_URI }}" >> .env
 
       - name: Setup Expo/EAS
         uses: expo/expo-github-action@v8
