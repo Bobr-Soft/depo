@@ -7,6 +7,7 @@ import { adminCreateTask, adminGetItems, type ApiItem, type CreateTaskInput } fr
 import { TaskComplete } from "@/constants/types";
 import { useSyncStatus } from "@/hooks";
 import { enqueueSyncOperation, initDatabase, isDatabaseInitialized } from "@/services/database";
+import { isOnline } from "@/services/sync";
 
 const ASSIGNABLE_STATUSES = new Set(["pending", "in_progress"]);
 
@@ -92,7 +93,8 @@ export default function NewPickingScreen() {
     setError(null);
     try {
       setTasks(await refreshTasks());
-      if (syncStatus.isOnline) {
+      const currentlyOnline = await isOnline();
+      if (currentlyOnline) {
         await fetchItems();
       }
     } catch {
@@ -226,7 +228,8 @@ export default function NewPickingScreen() {
         return;
       }
 
-      if (!syncStatus.isOnline) {
+      const currentlyOnline = await isOnline();
+      if (!currentlyOnline) {
         await enqueueCreateForOffline(payload);
         setNotice("Offline mód: a feladat létrehozása sorba állítva, online állapotban kerül elküldésre.");
         resetCreateForm();
@@ -282,6 +285,12 @@ export default function NewPickingScreen() {
           <XStack backgroundColor="$red5" padding="$2" borderRadius="$3" alignItems="center" gap="$2">
             <AlertCircle size={16} color="$red10" />
             <Text fontSize={12} color="$red10">{error}</Text>
+          </XStack>
+        )}
+        {syncStatus.lastFailureReason && !error && (
+          <XStack backgroundColor="$yellow5" padding="$2" borderRadius="$3" alignItems="center" gap="$2">
+            <AlertCircle size={16} color="$yellow10" />
+            <Text fontSize={12} color="$yellow10">Utolsó szinkron hiba oka: {syncStatus.lastFailureReason}</Text>
           </XStack>
         )}
       </YStack>

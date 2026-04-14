@@ -12,6 +12,7 @@ import {
   deleteUserPhotoUrl,
 } from './secureStorage';
 import { API_TIMEOUT, RETRY_CONFIG } from '@/constants/config';
+import { logDiagnostic } from './diagnostics';
 
 let silentReauthPromise: Promise<LoginResult> | null = null;
 
@@ -20,6 +21,46 @@ export interface LoginResult {
   token?: string;
   error?: string;
   isRetrying?: boolean;
+}
+
+type AuthFailureReason =
+  | 'timeout'
+  | 'network'
+  | 'invalid_token'
+  | 'client_error'
+  | 'server_error'
+  | 'unknown';
+
+export type LogoutReason = 'user_action' | 'auth_recovery_failed' | 'token_invalid' | 'unknown';
+
+function classifyAuthFailure(error: Error, statusCode?: number): AuthFailureReason {
+  if (error.name === 'AbortError' || error.message.includes('timeout')) {
+    return 'timeout';
+  }
+
+  if (
+    error.message.includes('Network') ||
+    error.message.includes('ECONNREFUSED') ||
+    error.message.includes('ETIMEDOUT')
+  ) {
+    return 'network';
+  }
+
+  if (error.message.includes('Invalid token')) {
+    return 'invalid_token';
+  }
+
+  if (typeof statusCode === 'number') {
+    if (statusCode >= 400 && statusCode < 500) {
+      return 'client_error';
+    }
+
+    if (statusCode >= 500) {
+      return 'server_error';
+    }
+  }
+
+  return 'unknown';
 }
 
 function isJwtToken(token: string): boolean {
@@ -58,8 +99,14 @@ export async function login(email: string): Promise<LoginResult> {
   let lastError: Error | null = null;
 
   for (let attempt = 1; attempt <= RETRY_CONFIG.maxAttempts; attempt++) {
+    const attemptStartedAt = Date.now();
     try {
       console.log(`Login attempt ${attempt}/${RETRY_CONFIG.maxAttempts} for ${email}`);
+      logDiagnostic('auth.login.attempt', {
+        email,
+        attempt,
+        maxAttempts: RETRY_CONFIG.maxAttempts,
+      });
 
       const controller = new AbortController();
       const timeoutId = setTimeout(() => {
@@ -79,6 +126,17 @@ export async function login(email: string): Promise<LoginResult> {
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
         lastError = new Error(body.message ?? `Login failed (HTTP ${response.status})`);
+        logDiagnostic(
+          'auth.login.http_error',
+          {
+            email,
+            attempt,
+            httpStatus: response.status,
+            reason: classifyAuthFailure(lastError, response.status),
+            durationMs: Date.now() - attemptStartedAt,
+          },
+          response.status >= 500 ? 'warn' : 'error'
+        );
 
         // Don't retry on 4xx errors except timeout
         if (response.status >= 400 && response.status < 500) {
@@ -102,10 +160,16 @@ export async function login(email: string): Promise<LoginResult> {
         ]);
 
         console.log('✅ Login successful');
+        logDiagnostic('auth.login.success', {
+          email: userEmail,
+          durationMs: Date.now() - attemptStartedAt,
+          attempt,
+        });
         return { success: true, token };
       }
     } catch (err) {
       lastError = err instanceof Error ? err : new Error('Unknown error');
+      const reason = classifyAuthFailure(lastError);
 
       // Check if error is retryable
       const isRetryable =
@@ -118,6 +182,14 @@ export async function login(email: string): Promise<LoginResult> {
       if (isRetryable && attempt < RETRY_CONFIG.maxAttempts) {
         const delay = getBackoffDelay(attempt);
         console.warn(`Attempt ${attempt} failed (${lastError.message}), retrying in ${Math.round(delay)}ms...`);
+        logDiagnostic('auth.login.retry', {
+          email,
+          attempt,
+          maxAttempts: RETRY_CONFIG.maxAttempts,
+          retryDelayMs: Math.round(delay),
+          reason,
+          error: lastError.message,
+        }, 'warn');
         await sleep(delay);
         continue;
       }
@@ -133,6 +205,14 @@ export async function login(email: string): Promise<LoginResult> {
       ) {
         errorMessage = `Cannot reach backend at ${loginUrl}. Check API URL and network access (on iOS, localhost points to the phone/simulator itself).`;
       }
+
+      logDiagnostic('auth.login.failed', {
+        email,
+        attempt,
+        maxAttempts: RETRY_CONFIG.maxAttempts,
+        reason,
+        error: errorMessage,
+      }, 'error');
 
       return {
         success: false,
@@ -160,7 +240,8 @@ export async function isAuthenticated(): Promise<boolean> {
 /**
  * Clear the JWT and user email from secure storage.
  */
-export async function logout(): Promise<void> {
+export async function logout(reason: LogoutReason = 'user_action'): Promise<void> {
+  logDiagnostic('auth.logout', { reason });
   await Promise.all([deleteToken(), deleteUserEmail(), deleteUserRole(), deleteUserPhotoUrl()]);
 }
 
@@ -170,6 +251,7 @@ export async function logout(): Promise<void> {
  */
 export async function reauthenticateSilently(): Promise<LoginResult> {
   if (silentReauthPromise) {
+    logDiagnostic('auth.reauth.join_existing');
     return silentReauthPromise;
   }
 
@@ -177,6 +259,7 @@ export async function reauthenticateSilently(): Promise<LoginResult> {
     const storedEmail = await getUserEmail();
 
     if (!storedEmail) {
+      logDiagnostic('auth.reauth.failed', { reason: 'missing_stored_email' }, 'warn');
       return {
         success: false,
         error: 'No stored user email. Please log in again.',
@@ -184,12 +267,18 @@ export async function reauthenticateSilently(): Promise<LoginResult> {
     }
 
     console.log('Attempting silent re-authentication...');
+    logDiagnostic('auth.reauth.attempt', { email: storedEmail });
     const result = await login(storedEmail);
 
     if (result.success) {
       console.log('✅ Silent re-authentication successful');
+      logDiagnostic('auth.reauth.success', { email: storedEmail });
     } else {
       console.warn(`Silent re-authentication failed: ${result.error ?? 'Unknown error'}`);
+      logDiagnostic('auth.reauth.failed', {
+        email: storedEmail,
+        reason: result.error ?? 'unknown',
+      }, 'warn');
     }
 
     return result;
