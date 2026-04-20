@@ -209,7 +209,7 @@ export default function ManageLocationsPage() {
 
   const shelfLevels = useMemo(() => {
     return DISPLAY_SHELF_LEVELS;
-  }, [rackLocations]);
+  }, []);
 
   const rackItemCount = useMemo(() => {
     return rackLocations.reduce((sum, location) => sum + location.items.length, 0);
