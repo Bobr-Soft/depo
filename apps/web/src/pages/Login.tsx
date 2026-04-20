@@ -48,7 +48,7 @@ export const Login = ({ onLogin }: LoginProps) => {
       console.log('📥 Backend response:', res.data);
       const { token, user: userData } = res.data;
       console.log('📥 User data:', userData);
-      const role = userData?.role || 'Teacher';
+      const role = userData?.role || 'Worker';
 
       console.log('✅ Backend validation successful');
       console.log('👤 User role:', role);

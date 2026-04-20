@@ -45,6 +45,7 @@ export default function ListPage() {
   const [itemToDelete, setItemToDelete] = useState<Item | null>(null);
   const [selectedItems, setSelectedItems] = useState<number[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState<number | null>(null);
   const isEditing = Boolean(currentItem?.id);
 
   // Load categories and locations
@@ -201,14 +202,16 @@ export default function ListPage() {
 
   // Filter items based on search query
   const filteredItems = items.filter(item => {
-    if (!searchQuery) return true;
+    const matchesCategory = selectedCategory === null || item.category_id === selectedCategory;
+    if (!searchQuery) return matchesCategory;
     const query = searchQuery.toLowerCase();
     return (
-      item.name.toLowerCase().includes(query) ||
+      matchesCategory &&
+      (item.name.toLowerCase().includes(query) ||
       item.barcode?.toLowerCase().includes(query) ||
       item.description?.toLowerCase().includes(query) ||
       item.category?.toLowerCase().includes(query) ||
-      item.location?.toLowerCase().includes(query)
+      item.location?.toLowerCase().includes(query))
     );
   });
 
@@ -269,6 +272,28 @@ export default function ListPage() {
               Hozzáadás
             </Button>
           </Box>
+        </Box>
+        <Box sx={{ display: 'flex', gap: 2, mb: 2, alignItems: 'center' }}>
+        <FormControl sx={{ minWidth: 240 }}>
+          <InputLabel>Kategória</InputLabel>
+          <Select<string | number>
+            value={selectedCategory === null ? '' : selectedCategory}
+            onChange={(e) => {
+              const value = e.target.value;
+              setSelectedCategory(value === '' ? null : Number(value));
+            }}
+            label="Kategória"
+          >
+            <MenuItem value="">
+              <em>Összes</em>
+            </MenuItem>
+            {categories.map((category) => (
+              <MenuItem key={category.id} value={category.id}>
+                {category.name}
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
         </Box>
         <TableContainer component={Paper} sx={{
           overflow: 'visible',

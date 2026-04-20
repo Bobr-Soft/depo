@@ -46,6 +46,7 @@ function createMockConnection(queryResults = []) {
 
 const adminToken = makeToken({ role: 'Admin' });
 const workerToken = makeToken({ role: 'Worker' });
+const supervisorToken = makeToken({ role: 'Supervisor' });
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -179,6 +180,115 @@ describe('POST /items', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .send({});
     expect(res.status).toBe(400);
+  });
+});
+
+describe('Rentals flow', () => {
+  test('POST /rentals requires auth', async () => {
+    const res = await request(app).post('/rentals').send({ itemId: 1, quantity: 1 });
+    expect(res.status).toBe(401);
+  });
+
+  test('Worker can create a pending rental request', async () => {
+    db.query
+      .mockResolvedValueOnce([[{ id: 1, email: 'test@example.com', role: 'Worker' }], []])
+      .mockResolvedValueOnce([[{ id: 1 }], []])
+      .mockResolvedValueOnce([{ insertId: 10 }, []])
+      .mockResolvedValueOnce([[{
+        id: 10,
+        status: 'pending',
+        requester_email: 'test@example.com',
+        item_id: 1,
+        quantity: 2,
+        purpose: 'Need it',
+        item_name: 'Widget',
+        item_barcode: 'BC001',
+        reviewer_email: null,
+        review_note: null,
+        reviewed_at: null,
+        approved_at: null,
+        returned_at: null,
+        created_at: '2026-01-01T00:00:00.000Z',
+        updated_at: '2026-01-01T00:00:00.000Z',
+      }], []]);
+
+    const res = await request(app)
+      .post('/rentals')
+      .set('Authorization', `Bearer ${workerToken}`)
+      .send({ itemId: 1, quantity: 2, purpose: 'Need it' });
+
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({
+      id: 10,
+      status: 'pending',
+      itemId: 1,
+      quantity: 2,
+    });
+  });
+
+  test('Worker cannot approve rental', async () => {
+    const res = await request(app)
+      .post('/rentals/10/approve')
+      .set('Authorization', `Bearer ${workerToken}`)
+      .send({ note: 'ok' });
+
+    expect(res.status).toBe(403);
+  });
+
+  test('Admin can approve pending rental and deduct stock', async () => {
+    const connection = createMockConnection([
+      [[{ id: 10, item_id: 1, quantity: 2, status: 'pending' }], []],
+      [[{ id: 1, quantity: 5 }], []],
+      [[], []],
+      [[], []],
+      [[], []],
+    ]);
+    db.getConnection.mockResolvedValue(connection);
+
+    const res = await request(app)
+      .post('/rentals/10/approve')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ note: 'Approved' });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ id: 10, status: 'approved' });
+    expect(connection.beginTransaction).toHaveBeenCalled();
+    expect(connection.commit).toHaveBeenCalled();
+  });
+
+  test('Supervisor cannot delete returned rental', async () => {
+    const res = await request(app)
+      .delete('/rentals/10')
+      .set('Authorization', `Bearer ${supervisorToken}`);
+
+    expect(res.status).toBe(403);
+  });
+
+  test('Admin cannot delete non-returned rental', async () => {
+    db.query
+      .mockResolvedValueOnce([[{ id: 1, email: 'test@example.com', role: 'Admin' }], []])
+      .mockResolvedValueOnce([[{ id: 10, status: 'approved' }], []]);
+
+    const res = await request(app)
+      .delete('/rentals/10')
+      .set('Authorization', `Bearer ${adminToken}`);
+
+    expect(res.status).toBe(409);
+    expect(res.body.message).toMatch(/only returned rentals can be deleted/i);
+  });
+
+  test('Admin can delete returned rental', async () => {
+    db.query
+      .mockResolvedValueOnce([[{ id: 1, email: 'test@example.com', role: 'Admin' }], []])
+      .mockResolvedValueOnce([[{ id: 10, status: 'returned' }], []])
+      .mockResolvedValueOnce([{ affectedRows: 1 }, []]);
+
+    const res = await request(app)
+      .delete('/rentals/10')
+      .set('Authorization', `Bearer ${adminToken}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ id: 10, deleted: true });
   });
 });
 

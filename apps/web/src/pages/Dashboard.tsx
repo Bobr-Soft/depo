@@ -29,6 +29,7 @@ import RentingItemsPage from './RentingItemsPage';
 import ManageRentingItemsPage from './ManageRentingItemsPage';
 import DebugPage from './DebugPage';
 import PickingPage from './PickingPage';
+import { normalizeUserRole, type UserRole } from '../utils/roles';
 const NAVIGATION: Navigation = [
   {
     segment: 'overview',
@@ -44,23 +45,7 @@ const NAVIGATION: Navigation = [
     title: 'Kölcsönzések kezelése',
     icon: <DashboardIcon />,
   },
-  {
-    segment: 'quick-actions',
-    title: 'Gyors műveletek',
-    icon: <ConstructionIcon />,
-    children: [
-      {
-        segment: 'quick-action-item-add',
-        title: 'Elem hozzáadása',
-        icon: <AddIcon />,
-      },
-      {
-        segment: 'quick-action-item-list',
-        title: 'Elemek listája',
-        icon: <ListIcon />,
-      },
-    ],
-  },
+  
   {
     segment: 'manage-items',
     title: 'Elemek kezelése',
@@ -125,52 +110,39 @@ const demoTheme = createTheme({
   },
 });
 
-function DemoPageContent({ pathname, userRole }: { pathname: string; userRole: string }) {
-  const isAdmin = userRole.toLowerCase() === 'admin';
-  console.log('🚪 Route guard check - Path:', pathname, 'Role:', userRole, 'Is Admin:', isAdmin);
+function DemoPageContent({ pathname, role, userEmail }: { pathname: string; role: UserRole; userEmail: string }) {
+  console.log('🚪 Route guard check - Path:', pathname, 'Role:', role);
 
-  // Route guard based on role
-  if (isAdmin) {
-    // Admin cannot access renting page
-    if (pathname === '/renting') {
-      return (
-        <Box sx={{ p: 3, textAlign: 'center' }}>
-          <Typography variant="h5" color="error" gutterBottom>
-            Hozzáférés megtagadva
-          </Typography>
-          <Typography variant="body1">
-            Az adminisztrátorok számára a Kölcsönzések kezelése érhető el.
-          </Typography>
-        </Box>
-      );
-    }
-  } else {
-    // Teacher can only access overview, renting and dashboard
-    const allowedPaths = ['/overview', '/renting', '/dashboard', '/picking'];
-    if (!allowedPaths.includes(pathname)) {
-      return (
-        <Box sx={{ p: 3, textAlign: 'center' }}>
-          <Typography variant="h5" color="error" gutterBottom>
-            Hozzáférés megtagadva
-          </Typography>
-          <Typography variant="body1">
-            Nem jogosult ehhez az oldalhoz. Csak az Áttekintés és a Kölcsönzés elérhető tanárok számára.
-          </Typography>
-        </Box>
-      );
-    }
+  const allowedPathsByRole: Record<UserRole, string[] | null> = {
+    admin: null,
+    supervisor: ['/overview', '/renting', '/manage-rentings', '/dashboard', '/picking'],
+    worker: ['/overview', '/renting', '/dashboard', '/picking'],
+  };
+
+  const allowedPaths = allowedPathsByRole[role];
+  if (allowedPaths && !allowedPaths.includes(pathname)) {
+    return (
+      <Box sx={{ p: 3, textAlign: 'center' }}>
+        <Typography variant="h5" color="error" gutterBottom>
+          Hozzáférés megtagadva
+        </Typography>
+        <Typography variant="body1">
+          Nem jogosult ehhez az oldalhoz.
+        </Typography>
+      </Box>
+    );
   }
 
-   switch (pathname as string) {
+  switch (pathname as string) {
     case '/overview':
       return (<OverviewPage />);
     case '/dashboard':
       // Redirect to appropriate page based on role
       return (<OverviewPage />);
     case '/renting':
-      return (<RentingItemsPage />);
+      return (<RentingItemsPage role={role} userEmail={userEmail} />);
     case '/manage-rentings':
-      return (<ManageRentingItemsPage />);
+      return (<ManageRentingItemsPage role={role} userEmail={userEmail} />);
     case '/manage-categories':
       return (<CategoriesPage />);
     case '/manage-items':
@@ -179,12 +151,10 @@ function DemoPageContent({ pathname, userRole }: { pathname: string; userRole: s
       return (<ManageUsersPage />);
     case '/manage-locations':
       return (<ManageLocationsPage />);
-    case '/quick-actions/quick-action-item-add':
-      return (<QuickActionsPageAdd />);
-    case '/quick-actions/quick-action-item-list':
-      return (<QuickActionsPageList />);
+    
+    
     case '/picking':
-      return (<PickingPage userRole={userRole} />);
+      return (<PickingPage userRole={role} />);
     case '/debug':
       return (<DebugPage />);
     default:
@@ -212,6 +182,7 @@ function MyAppTitle() {
 
 export default function Dashboard({ onLogout, user }: DashboardProps) {
   const router = useDemoRouter('/dashboard');
+  const stabilizeMainScrollbar = router.pathname === '/manage-items';
   const [session, setSession] = React.useState<Session | null>({
     user: {
       name: user.name,
@@ -220,30 +191,33 @@ export default function Dashboard({ onLogout, user }: DashboardProps) {
     },
   });
 
-  const userRole = (user.role || 'Teacher').toString().trim();
+  const userRoleRaw = (user.role || 'Worker').toString().trim();
+  const role = normalizeUserRole(userRoleRaw);
   console.log('👤 Dashboard loaded with user:', user);
-  console.log('👤 User role:', userRole, 'Type:', typeof userRole);
-  console.log('👤 User role lowercase:', userRole.toLowerCase());
-  console.log('👤 Is Admin?', userRole.toLowerCase() === 'admin');
+  console.log('👤 User role:', userRoleRaw, 'Type:', typeof userRoleRaw);
+  console.log('👤 Normalized role:', role);
 
   // Filter navigation based on role
   const filteredNavigation = React.useMemo(() => {
-    console.log('🔍 Filtering navigation for role:', userRole);
-    const isAdmin = userRole.toLowerCase() === 'admin';
-    if (isAdmin) {
-      // Admins see everything EXCEPT renting
-      console.log('✅ Admin detected - showing all navigation except Renting');
-      return NAVIGATION.filter(item =>
-        !('segment' in item) || item.segment !== 'renting'
-      );
-    } else {
-      // Teachers see Overview, Renting and Picking
-      console.log('👨‍🏫 Teacher detected - showing Overview, Renting and Picking');
-      return NAVIGATION.filter(item =>
-        'segment' in item && (item.segment === 'overview' || item.segment === 'renting' || item.segment === 'picking')
+    console.log('🔍 Filtering navigation for role:', role);
+
+    if (role === 'admin') {
+      // Admins see everything EXCEPT the worker-facing renting entry
+      return NAVIGATION.filter((item) => !('segment' in item) || item.segment !== 'renting');
+    }
+
+    if (role === 'supervisor') {
+      // Supervisors can approve rentings
+      return NAVIGATION.filter(
+        (item) => 'segment' in item && (item.segment === 'overview' || item.segment === 'manage-rentings' || item.segment === 'picking')
       );
     }
-  }, [userRole]);
+
+    // Workers can request rentings
+    return NAVIGATION.filter(
+      (item) => 'segment' in item && (item.segment === 'overview' || item.segment === 'renting' || item.segment === 'picking')
+    );
+  }, [role]);
 
 
   const authentication = React.useMemo(
@@ -263,11 +237,21 @@ export default function Dashboard({ onLogout, user }: DashboardProps) {
       theme={demoTheme}
     >
       <DashboardLayout
+        sx={
+          stabilizeMainScrollbar
+            ? {
+                '& main': {
+                  scrollbarGutter: 'stable',
+                  overflowY: 'scroll !important',
+                },
+              }
+            : undefined
+        }
         slots={{
           appTitle: MyAppTitle
         }}
       >
-        <DemoPageContent pathname={router.pathname} userRole={userRole} />
+        <DemoPageContent pathname={router.pathname} role={role} userEmail={user.email} />
       </DashboardLayout>
     </AppProvider>
   );
