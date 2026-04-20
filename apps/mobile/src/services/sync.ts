@@ -546,6 +546,71 @@ async function pushSyncQueue(token: string, apiUrl: string): Promise<void> {
 
           await db.incrementSyncRetry(operation.id);
         }
+      } else if (operation.entity_type === 'task' && operation.operation === 'UPDATE') {
+        // Push task-level status update to server (e.g. completed)
+        const taskId = operation.entity_id;
+        const { status } = payload;
+
+        try {
+          const response = await fetchWithTimeout(buildApiUrl(apiUrl, `/tasks/${taskId}/status`), {
+            method: 'PUT',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ status }),
+          }).catch((error) => {
+            if (error instanceof Error && error.name === 'AbortError') {
+              throw new Error(`Timed out updating task status from sync queue after ${API_TIMEOUT}ms`);
+            }
+            throw error;
+          });
+
+          if (!response.ok) {
+            const errorText = await response.text().catch(() => 'Unknown error');
+            throw new ApiSyncError(response.status, `API error: ${response.status} - ${errorText}`);
+          }
+
+          console.log(`✅ Synced task ${taskId} status (${status}) to server`);
+          if (idempotencyKey) processedKeys.add(idempotencyKey);
+          await db.removeSyncOperation(operation.id);
+        } catch (apiError) {
+          if (apiError instanceof ApiSyncError && isNonRetryableStatus(apiError.statusCode)) {
+            await db.moveSyncOperationToDeadLetter(operation.id, db.DEAD_LETTER_REASONS.nonRetryableStatus, {
+              statusCode: apiError.statusCode,
+              message: apiError.message,
+              attempt: nextAttempt,
+            });
+            logDiagnostic('sync.queue.deadletter', {
+              opId: operation.id,
+              entityType: operation.entity_type,
+              operation: operation.operation,
+              reason: 'non_retryable_status',
+              statusCode: apiError.statusCode,
+            }, 'warn');
+            continue;
+          }
+
+          if (nextAttempt >= MAX_SYNC_RETRY_COUNT) {
+            await db.moveSyncOperationToDeadLetter(operation.id, db.DEAD_LETTER_REASONS.maxRetriesExceeded, {
+              message: apiError instanceof Error ? apiError.message : 'Unknown error',
+              attempt: nextAttempt,
+            });
+            logDiagnostic('sync.queue.deadletter', {
+              opId: operation.id,
+              entityType: operation.entity_type,
+              operation: operation.operation,
+              reason: 'max_retries_exceeded',
+            }, 'warn');
+            continue;
+          }
+
+          console.warn(
+            `⚠️  Failed to push task status update ${operation.id} (attempt ${nextAttempt}):`,
+            apiError instanceof Error ? apiError.message : 'Unknown error'
+          );
+          await db.incrementSyncRetry(operation.id);
+        }
       } else if (operation.entity_type === 'task_item' && operation.operation === 'UPDATE') {
         const { picked_quantity } = payload;
         const taskItemId = operation.entity_id;
@@ -584,7 +649,7 @@ async function pushSyncQueue(token: string, apiUrl: string): Promise<void> {
           if (!response.ok) {
             const errorText = await response.text().catch(() => 'Unknown error');
             if (response.status === 401 || response.status === 403) {
-              console.error(`Auth error: ${response.status} - ${errorText}`);
+              console.warn(`[sync] Task-item auth denied (${response.status}), will dead-letter`);
               throw new ApiSyncError(response.status, 'Unauthorized');
             }
             throw new ApiSyncError(response.status, `API error: ${response.status} - ${errorText}`);

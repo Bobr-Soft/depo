@@ -15,6 +15,8 @@ type DraftItem = {
   key: string;
   item_id: string;
   requested_quantity: string;
+  searchQuery: string;
+  showDropdown: boolean;
 };
 
 function getPriorityLabel(priority: number): string {
@@ -35,6 +37,8 @@ const createDraftItem = (): DraftItem => ({
   key: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
   item_id: "",
   requested_quantity: "1",
+  searchQuery: "",
+  showDropdown: false,
 });
 
 export default function NewPickingScreen() {
@@ -82,7 +86,7 @@ export default function NewPickingScreen() {
   async function fetchItems() {
     try {
       const items = await adminGetItems();
-      setAvailableItems(items.slice(0, 10));
+      setAvailableItems(items);
     } catch {
       setAvailableItems([]);
     }
@@ -136,8 +140,29 @@ export default function NewPickingScreen() {
     });
   }
 
-  function updateDraftItem(key: string, field: "item_id" | "requested_quantity", value: string) {
+  function updateDraftItem(key: string, field: "item_id" | "requested_quantity" | "searchQuery" | "showDropdown", value: string | boolean) {
     setDraftItems((prev) => prev.map((item) => (item.key === key ? { ...item, [field]: value } : item)));
+  }
+
+  function selectItemForDraft(key: string, selectedItem: ApiItem) {
+    setDraftItems((prev) =>
+      prev.map((item) =>
+        item.key === key
+          ? { ...item, item_id: String(selectedItem.id), searchQuery: `#${selectedItem.id} ${selectedItem.name}`, showDropdown: false }
+          : item
+      )
+    );
+  }
+
+  function getFilteredItems(query: string): ApiItem[] {
+    const trimmed = query.trim().toLowerCase();
+    if (!trimmed) return availableItems;
+    return availableItems.filter(
+      (item) =>
+        item.name.toLowerCase().includes(trimmed) ||
+        String(item.id).includes(trimmed) ||
+        (item.barcode && item.barcode.toLowerCase().includes(trimmed))
+    );
   }
 
   function resetCreateForm() {
@@ -239,8 +264,7 @@ export default function NewPickingScreen() {
       const createdTask = await adminCreateTask(payload);
       setNotice(`Feladat létrehozva: ${createdTask.source_id ?? createdTask.name}`);
       resetCreateForm();
-      await handleRefresh();
-      router.push({ pathname: "/picking/[id]", params: { id: createdTask.id } });
+      router.replace({ pathname: "/picking/[id]", params: { id: String(createdTask.id) } });
     } catch (createError) {
       const message = createError instanceof Error ? createError.message : "A feladat létrehozása közben hiba történt.";
       setError(message.includes("403") ? "Nincs jogosultság új feladat létrehozásához." : message);
@@ -335,41 +359,69 @@ export default function NewPickingScreen() {
                   <Button size="$2" theme="gray" icon={Plus} onPress={addDraftItem}>Új tétel</Button>
                 </XStack>
 
-                {draftItems.map((draft) => (
-                  <XStack key={draft.key} gap="$2" alignItems="center">
-                    <Input
-                      flex={1}
-                      placeholder="Item ID"
-                      keyboardType="numeric"
-                      value={draft.item_id}
-                      onChangeText={(text: string) => updateDraftItem(draft.key, "item_id", text)}
-                    />
-                    <Input
-                      width={110}
-                      placeholder="Mennyiség"
-                      keyboardType="numeric"
-                      value={draft.requested_quantity}
-                      onChangeText={(text: string) => updateDraftItem(draft.key, "requested_quantity", text)}
-                    />
-                    <Button
-                      size="$2"
-                      theme="red"
-                      circular
-                      icon={Trash2}
-                      onPress={() => removeDraftItem(draft.key)}
-                      disabled={draftItems.length <= 1}
-                    />
-                  </XStack>
-                ))}
+                {draftItems.map((draft) => {
+                  const filtered = getFilteredItems(draft.searchQuery);
+                  return (
+                    <YStack key={draft.key} gap="$1">
+                      <XStack gap="$2" alignItems="center">
+                        <YStack flex={1}>
+                          <Input
+                            placeholder="Termék keresése..."
+                            value={draft.searchQuery}
+                            onChangeText={(text: string) => {
+                              updateDraftItem(draft.key, "searchQuery", text);
+                              updateDraftItem(draft.key, "showDropdown", true as any);
+                              // If user clears the field, clear item_id too
+                              if (!text.trim()) updateDraftItem(draft.key, "item_id", "");
+                            }}
+                            onFocus={() => updateDraftItem(draft.key, "showDropdown", true as any)}
+                          />
+                        </YStack>
+                        <Input
+                          width={90}
+                          placeholder="Menny."
+                          keyboardType="numeric"
+                          value={draft.requested_quantity}
+                          onChangeText={(text: string) => updateDraftItem(draft.key, "requested_quantity", text)}
+                        />
+                        <Button
+                          size="$2"
+                          theme="red"
+                          circular
+                          icon={Trash2}
+                          onPress={() => removeDraftItem(draft.key)}
+                          disabled={draftItems.length <= 1}
+                        />
+                      </XStack>
+                      {draft.showDropdown && filtered.length > 0 && (
+                        <YStack backgroundColor="$color2" borderWidth={1} borderColor="$color5" borderRadius="$3" maxHeight={150} overflow="hidden">
+                          <ScrollView nestedScrollEnabled>
+                            {filtered.slice(0, 20).map((item) => (
+                              <Button
+                                key={item.id}
+                                size="$3"
+                                backgroundColor="transparent"
+                                justifyContent="flex-start"
+                                borderRadius={0}
+                                borderBottomWidth={1}
+                                borderBottomColor="$color3"
+                                onPress={() => selectItemForDraft(draft.key, item)}
+                              >
+                                <Text fontSize={13} color="$color11" numberOfLines={1}>
+                                  #{item.id} — {item.name}{item.barcode ? ` (${item.barcode})` : ""}
+                                </Text>
+                              </Button>
+                            ))}
+                          </ScrollView>
+                        </YStack>
+                      )}
+                      {draft.item_id ? (
+                        <Text fontSize={11} color="$green10">Kiválasztva: #{draft.item_id}</Text>
+                      ) : null}
+                    </YStack>
+                  );
+                })}
 
-                {availableItems.length > 0 && (
-                  <YStack backgroundColor="$color1" borderRadius="$3" padding="$2" gap="$1">
-                    <Text fontSize={11} color="$color9">Gyors súgó item ID-khoz (első 10):</Text>
-                    {availableItems.map((item) => (
-                      <Text key={item.id} fontSize={11} color="$color10">#{item.id} - {item.name}</Text>
-                    ))}
-                  </YStack>
-                )}
               </YStack>
 
               <XStack justifyContent="space-between" alignItems="center">

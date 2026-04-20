@@ -170,7 +170,7 @@ function safeStringify(value) {
 
 function normalizeRole(value) {
   if (value === null || value === undefined) {
-    return 'Teacher';
+    return 'Worker';
   }
 
   const raw = Buffer.isBuffer(value)
@@ -179,7 +179,7 @@ function normalizeRole(value) {
 
   const normalized = raw.trim().toLowerCase();
   if (!normalized) {
-    return 'Teacher';
+    return 'Worker';
   }
 
   return normalized.charAt(0).toUpperCase() + normalized.slice(1);
@@ -526,7 +526,7 @@ async function authenticateJWT(req, res, next) {
         if (blockedUsers.has(decoded.email.toLowerCase())) {
           return res.status(401).json({ message: 'Session invalidated by simulator' });
         }
-        req.user = { ...decoded, dbUser: rows[0] };
+        req.user = { ...decoded, role: normalizeRole(rows[0].role), dbUser: rows[0] };
       } catch (dbErr) {
         console.error('❌ Database error during auth:', dbErr.message);
         req.user = decoded;
@@ -626,7 +626,7 @@ app.post('/login', async (req, res) => {
         }
       }
 
-      const role = rawRole ? rawRole.charAt(0).toUpperCase() + rawRole.slice(1) : 'Teacher';
+      const role = rawRole ? rawRole.charAt(0).toUpperCase() + rawRole.slice(1) : 'Worker';
 
       console.log('✅ Raw role (lowercase):', rawRole);
       console.log('✅ Capitalized role:', role);
@@ -2266,35 +2266,12 @@ async function handleInboundPutaway(req, res) {
       return res.status(400).json({ message: 'No putaway location available' });
     }
 
-    const [inventoryRows] = await connection.query(
-      `SELECT id, quantity
-       FROM inventory
-       WHERE item_id = ? AND location_id = ?
-       LIMIT 1
-       FOR UPDATE`,
-      [parsedItemId, location.id]
-    );
-
-    if (inventoryRows.length > 0) {
-      await connection.query(
-        `UPDATE inventory
-         SET quantity = COALESCE(quantity, 0) + ?
-         WHERE id = ?`,
-        [parsedQuantity, inventoryRows[0].id]
-      );
-    } else {
-      await connection.query(
-        `INSERT INTO inventory (item_id, location_id, quantity)
-         VALUES (?, ?, ?)`,
-        [parsedItemId, location.id, parsedQuantity]
-      );
-    }
-
     await connection.query(
       `UPDATE items
-       SET quantity = COALESCE(quantity, 0) + ?
+       SET quantity = COALESCE(quantity, 0) + ?,
+           location_id = ?
        WHERE id = ?`,
-      [parsedQuantity, parsedItemId]
+      [parsedQuantity, location.id, parsedItemId]
     );
 
     await connection.commit();
@@ -2306,8 +2283,8 @@ async function handleInboundPutaway(req, res) {
     });
   } catch (err) {
     await connection.rollback();
-    console.error('❌ Error processing putaway:', err.message);
-    return res.status(500).json({ message: 'Database error' });
+    console.error('❌ Error processing putaway:', err.code, err.message, err.sql);
+    return res.status(500).json({ message: 'Database error', detail: err.message });
   } finally {
     connection.release();
   }
@@ -2892,8 +2869,13 @@ app.post('/tasks', authenticateJWT, requireAdmin, async (req, res) => {
 
       await connection.commit();
 
-      const [rows] = await db.query('SELECT * FROM tasks WHERE id = ?', [newId]);
-      return res.status(201).json(rows[0]);
+      const enrichedTask = await getTaskByIdForUser(
+        newId,
+        req.user?.email,
+        req.user?.dbUser?.id ?? req.user?.userId,
+        req.user?.role
+      );
+      return res.status(201).json(enrichedTask);
     } catch (txErr) {
       await connection.rollback();
       throw txErr;
@@ -2959,8 +2941,13 @@ app.put('/tasks/:id', authenticateJWT, requireAdmin, async (req, res) => {
     if (!dbConnected) return res.status(503).json({ message: 'Database not available' });
     const [result] = await db.query(`UPDATE tasks SET ${updates.join(', ')} WHERE id = ?`, values);
     if (result.affectedRows === 0) return res.status(404).json({ message: 'Task not found' });
-    const [rows] = await db.query('SELECT * FROM tasks WHERE id = ?', [taskId]);
-    return res.json(rows[0]);
+    const enrichedTask = await getTaskByIdForUser(
+      taskId,
+      req.user?.email,
+      req.user?.dbUser?.id ?? req.user?.userId,
+      req.user?.role
+    );
+    return res.json(enrichedTask);
   } catch (err) {
     console.error('❌ Error updating task:', err.message);
     return res.status(500).json({ message: 'Database error' });
@@ -3102,8 +3089,8 @@ async function handleTaskItemException(req, res) {
 
     const [inventoryRows] = await connection.query(
       `SELECT id, quantity
-       FROM inventory
-       WHERE item_id = ? AND location_id = ?
+       FROM items
+       WHERE id = ? AND location_id = ?
        LIMIT 1
        FOR UPDATE`,
       [parsedItemId, parsedLocationId]
@@ -3111,7 +3098,7 @@ async function handleTaskItemException(req, res) {
 
     if (!inventoryRows.length) {
       await connection.rollback();
-      return res.status(404).json({ message: 'Inventory row not found for item and location' });
+      return res.status(404).json({ message: 'Item not found for this location' });
     }
 
     const inventoryRow = inventoryRows[0];
@@ -3140,7 +3127,7 @@ async function handleTaskItemException(req, res) {
     );
 
     await connection.query(
-      `UPDATE inventory
+      `UPDATE items
        SET quantity = ?
        WHERE id = ?`,
       [nextQuantity, inventoryRow.id]

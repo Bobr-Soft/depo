@@ -1,11 +1,21 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { Alert } from "react-native";
 import { Stack, router } from "expo-router";
 import { BarcodeScanner } from "@/components";
+import { getScanSoundEnabled, getHapticFeedbackEnabled } from "@/services/secureStorage";
 
 export default function ScannerScreen() {
   const [scanKey, setScanKey] = useState(0);
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [hapticEnabled, setHapticEnabled] = useState(true);
   const isProcessing = useRef(false);
+
+  useEffect(() => {
+    Promise.all([getScanSoundEnabled(), getHapticFeedbackEnabled()]).then(([s, h]) => {
+      setSoundEnabled(s);
+      setHapticEnabled(h);
+    });
+  }, []);
 
   const handleScan = (data: string, type: string) => {
     if (isProcessing.current) return;
@@ -62,6 +72,8 @@ export default function ScannerScreen() {
         title="Általános Szkenner"
         instruction="Keresd meg a termék vonalkódját vagy QR kódját."
         autoResetDelay={0}
+        enableSound={soundEnabled}
+        enableHaptics={hapticEnabled}
       />
     </>
   );

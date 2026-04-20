@@ -6,6 +6,7 @@ import { useEffect } from "react";
 import "react-native-reanimated";
 import { useHeaderStyles } from "@/constants";
 import { isAuthenticated } from "@/services/auth";
+import { getToken, getApiUrl, buildApiUrl, setUserRole } from "@/services/secureStorage";
 import { initializeSyncService, cleanupSyncService } from "@/services/sync";
 import { useAutoSync } from "@/hooks";
 
@@ -24,6 +25,24 @@ export default function RootLayout() {
       if (!authed) {
         router.replace('/login');
       } else {
+        // Refresh role from server to catch DB-side role changes
+        try {
+          const [token, apiUrl] = await Promise.all([getToken(), getApiUrl()]);
+          if (token && apiUrl) {
+            const meRes = await fetch(buildApiUrl(apiUrl, '/me'), {
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            if (meRes.ok) {
+              const meData = await meRes.json();
+              const serverRole = meData?.user?.role ?? meData?.user?.dbUser?.role ?? '';
+              if (serverRole) {
+                await setUserRole(serverRole);
+              }
+            }
+          }
+        } catch (e) {
+          // Non-critical — role will still be the one from last login
+        }
         // Initialize sync service for authenticated users
         try {
           await initializeSyncService();
@@ -50,12 +69,13 @@ export default function RootLayout() {
         screenOptions={headerStyles}
       >
         <Stack.Screen name="login" options={{ headerShown: false }} />
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="(tabs)" options={{ headerShown: false, title: "Főoldal" }} />
         <Stack.Screen
           name="inbound"
           options={{
             title: "Bevételezés",
             headerShown: true,
+            gestureEnabled: false,
           }}
         />
         <Stack.Screen
@@ -76,6 +96,7 @@ export default function RootLayout() {
           options={{
             title: "Szerkesztés",
             headerShown: true,
+            gestureEnabled: false,
           }}
         />
         <Stack.Screen

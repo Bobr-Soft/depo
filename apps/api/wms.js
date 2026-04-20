@@ -80,6 +80,7 @@ function sortItemsBySerpentineRoute(items) {
 async function allocatePutawayLocation(itemId, isXl, queryable = db) {
   const normalizedIsXl = normalizeBooleanFlag(isXl) ? 1 : 0;
 
+  // Strategy 1: Consolidation — find the location that already holds this item
   const [consolidationRows] = await queryable.query(
     `SELECT DISTINCT
         l.id,
@@ -89,13 +90,12 @@ async function allocatePutawayLocation(itemId, isXl, queryable = db) {
         l.is_xl,
         l.location_code,
         l.is_active
-      FROM inventory inv
-      INNER JOIN locations l ON l.id = inv.location_id
-      WHERE inv.item_id = ?
-        AND COALESCE(inv.quantity, 0) > 0
+      FROM items i
+      INNER JOIN locations l ON l.id = i.location_id
+      WHERE i.id = ?
+        AND COALESCE(i.quantity, 0) > 0
         AND l.is_active = 1
         AND l.is_xl = ?
-      ORDER BY l.row_num ASC, l.col_num ASC, l.shelf_level ASC
       LIMIT 1`,
     [itemId, normalizedIsXl]
   );
@@ -104,6 +104,7 @@ async function allocatePutawayLocation(itemId, isXl, queryable = db) {
     return mapWarehouseLocation(consolidationRows[0]);
   }
 
+  // Strategy 2: Find an empty active location (no items with stock assigned to it)
   const [emptyLocationRows] = await queryable.query(
     `SELECT
         l.id,
@@ -114,10 +115,10 @@ async function allocatePutawayLocation(itemId, isXl, queryable = db) {
         l.location_code,
         l.is_active
       FROM locations l
-      LEFT JOIN inventory inv ON inv.location_id = l.id
+      LEFT JOIN items i ON i.location_id = l.id AND COALESCE(i.quantity, 0) > 0
       WHERE l.is_active = 1
         AND l.is_xl = ?
-        AND inv.location_id IS NULL
+        AND i.id IS NULL
       ORDER BY l.row_num ASC, l.col_num ASC, l.shelf_level ASC
       LIMIT 1`,
     [normalizedIsXl]

@@ -266,11 +266,21 @@ export async function saveTasks(tasks: TaskComplete[]): Promise<void> {
       for (const task of tasks) {
         const taskStatus = resolveTaskStatusForLocalStore(task);
 
+        // Check if this task has unsynced local modifications (e.g. locally computed 'completed').
+        // If so, preserve the local status so the pull phase doesn't overwrite it.
+        const existingTask = await database.getFirstAsync<{ status: string; synced: number }>(
+          'SELECT status, synced FROM tasks WHERE id = ?',
+          [task.id]
+        );
+        const preserveLocalStatus = existingTask && existingTask.synced === 0;
+        const finalStatus = preserveLocalStatus ? existingTask.status : taskStatus;
+        const finalSynced = preserveLocalStatus ? 0 : 1;
+
         // Insert or replace task
         await database.runAsync(
           `INSERT OR REPLACE INTO tasks
            (id, name, type, source_id, assigned_user, assigned_user_email, assigned_user_role, assigned_user_is_active, assigned_user_last_login, status, priority, deadline, updated_at, created_at, synced)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             task.id,
             task.name,
@@ -281,27 +291,35 @@ export async function saveTasks(tasks: TaskComplete[]): Promise<void> {
             task.assigned_user_data?.role ?? null,
             task.assigned_user_data == null ? null : task.assigned_user_data.is_active ? 1 : 0,
             toEpoch(task.assigned_user_data?.last_login),
-            taskStatus,
+            finalStatus,
             task.priority,
             toEpoch(task.deadline),
             toEpoch(task.updated_at),
             toEpoch(task.created_at),
+            finalSynced,
           ]
         );
 
-        // Save task items
+        // Save task items — also preserve local picked state if unsynced
         for (const taskItem of task.items) {
+          const existingItem = await database.getFirstAsync<{ picked_quantity: number; status: string; synced: number }>(
+            'SELECT picked_quantity, status, synced FROM task_items WHERE id = ?',
+            [taskItem.id]
+          );
+          const preserveLocalItem = existingItem && existingItem.synced === 0;
+
           await database.runAsync(
             `INSERT OR REPLACE INTO task_items
              (id, task_id, item_id, requested_quantity, picked_quantity, status, synced)
-             VALUES (?, ?, ?, ?, ?, ?, 1)`,
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
             [
               taskItem.id,
               taskItem.task_id,
               taskItem.item.id,
               taskItem.requested_quantity,
-              taskItem.picked_quantity,
-              taskItem.status,
+              preserveLocalItem ? existingItem.picked_quantity : taskItem.picked_quantity,
+              preserveLocalItem ? existingItem.status : taskItem.status,
+              preserveLocalItem ? 0 : 1,
             ]
           );
 
@@ -568,6 +586,21 @@ async function recomputeAndPersistTaskStatus(
     'UPDATE tasks SET status = ?, synced = 0, updated_at = ? WHERE id = ?',
     [nextTaskStatus, updatedAt, taskId]
   );
+
+  // When task transitions to completed, queue a sync operation to push it to the server
+  if (nextTaskStatus === 'completed') {
+    await database.runAsync(
+      `INSERT INTO sync_queue (operation, entity_type, entity_id, payload, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      [
+        'UPDATE',
+        'task',
+        taskId,
+        JSON.stringify({ status: 'completed' }),
+        updatedAt,
+      ]
+    );
+  }
 
   return nextTaskStatus;
 }
