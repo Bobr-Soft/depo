@@ -162,6 +162,7 @@ export default function RentingItemsPage({ role, userEmail, forceMode }: Renting
     const res = await api.get('/items');
     const rows = Array.isArray(res.data) ? res.data : [];
     setItems(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       rows.map((row: any) => ({
         id: Number(row.id),
         name: String(row.name ?? ''),
@@ -190,6 +191,7 @@ export default function RentingItemsPage({ role, userEmail, forceMode }: Renting
     const res = await api.get('/users');
     const rows = Array.isArray(res.data) ? res.data : [];
     const emails = rows
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .map((row: any) => (typeof row?.email === 'string' ? row.email.trim() : ''))
       .filter(Boolean);
     setAllUserEmails(Array.from(new Set(emails)).sort((a, b) => a.localeCompare(b)));
@@ -209,6 +211,7 @@ export default function RentingItemsPage({ role, userEmail, forceMode }: Renting
           await Promise.all([fetchPending(), fetchAll()]);
         }
       }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (e: any) {
       setError(e?.response?.data?.message || e?.message || 'Hiba történt betöltés közben.');
     } finally {
@@ -238,6 +241,7 @@ export default function RentingItemsPage({ role, userEmail, forceMode }: Renting
       setPurpose('');
       setSuccess('Kölcsönzési igény elküldve. Jóváhagyásra vár.');
       await fetchMy();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (e: any) {
       setError(e?.response?.data?.message || e?.message || 'Nem sikerült elküldeni az igényt.');
     } finally {
@@ -253,6 +257,7 @@ export default function RentingItemsPage({ role, userEmail, forceMode }: Renting
       await api.post(`/rentals/${rentalId}/cancel`);
       setSuccess('Igény visszavonva.');
       await fetchMy();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (e: any) {
       setError(e?.response?.data?.message || e?.message || 'Nem sikerült visszavonni az igényt.');
     } finally {
@@ -272,6 +277,7 @@ export default function RentingItemsPage({ role, userEmail, forceMode }: Renting
       } else {
         await Promise.all([fetchPending(), fetchAll()]);
       }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (e: any) {
       setError(e?.response?.data?.message || e?.message || 'Nem sikerült rögzíteni a visszahozást.');
     } finally {
@@ -287,6 +293,7 @@ export default function RentingItemsPage({ role, userEmail, forceMode }: Renting
       await api.delete(`/rentals/${rentalId}`);
       setSuccess('Kölcsönzés törölve.');
       await Promise.all([fetchPending(), fetchAll()]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (e: any) {
       setError(e?.response?.data?.message || e?.message || 'Nem sikerült törölni a kölcsönzést.');
     } finally {
@@ -313,6 +320,7 @@ export default function RentingItemsPage({ role, userEmail, forceMode }: Renting
       setReviewDialogOpen(false);
       setReviewTarget(null);
       await Promise.all([fetchPending(), fetchAll()]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (e: any) {
       setError(e?.response?.data?.message || e?.message || 'Nem sikerült menteni.');
     } finally {

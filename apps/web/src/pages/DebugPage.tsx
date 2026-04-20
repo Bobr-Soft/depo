@@ -212,6 +212,7 @@ export default function DebugPage() {
     }
   }, [deckSource, dbItems]);
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { generateDeck(); }, [deckSource, dbItems.length]);
 
   // Auto-rotate

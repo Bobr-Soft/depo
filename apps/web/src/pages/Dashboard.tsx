@@ -20,11 +20,8 @@ import ManageLocationsPage from './ManageLocationsPage';
 import CategoriesPage from './ManageCategoriesPage';
 import ManageUsersPage from './ManageUsersPage';
 import ManageItemsPage from './ManageItemsPage';
-import AddIcon from '@mui/icons-material/Add';
 import BugReportIcon from '@mui/icons-material/BugReport';
 import ChecklistIcon from '@mui/icons-material/Checklist';
-import QuickActionsPageList from './QuickActionsPageList';
-import QuickActionsPageAdd from './QuickActionsPageAdd';
 import RentingItemsPage from './RentingItemsPage';
 import ManageRentingItemsPage from './ManageRentingItemsPage';
 import DebugPage from './DebugPage';
@@ -45,7 +42,7 @@ const NAVIGATION: Navigation = [
     title: 'Kölcsönzések kezelése',
     icon: <DashboardIcon />,
   },
-  
+
   {
     segment: 'manage-items',
     title: 'Elemek kezelése',
@@ -151,8 +148,8 @@ function DemoPageContent({ pathname, role, userEmail }: { pathname: string; role
       return (<ManageUsersPage />);
     case '/manage-locations':
       return (<ManageLocationsPage />);
-    
-    
+
+
     case '/picking':
       return (<PickingPage userRole={role} />);
     case '/debug':

@@ -125,7 +125,7 @@ export default function PickingScreen() {
         <XStack alignItems="center" justifyContent="space-between">
           <YStack>
             <H2 color="$color12">Komissiózás</H2>
-            <Text fontSize={14} color="$color10">Saját aktív feladatok, a kész és törölt elemek nélkül</Text>
+            <Text fontSize={14} color="$color10">Saját aktív feladatok</Text>
           </YStack>
 
           <XStack gap="$2">
