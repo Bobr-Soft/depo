@@ -6,6 +6,7 @@ import { Camera } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
 import loadTasks from '@/components/api';
 import { TaskComplete } from '@/constants/types';
+import { SyncStatusBanner } from '@/components/SyncStatusBanner';
 import {
   buildApiUrl,
   getApiUrl,
@@ -23,7 +24,7 @@ import { logout } from '@/services/auth';
 import { router } from 'expo-router';
 import { Colors } from '@/constants';
 import { APP_VERSION } from '@/constants/config';
-import { Shield, Settings, LifeBuoy, LogOut, Smartphone, Volume2, Vibrate, Activity, HardDrive } from '@tamagui/lucide-icons';
+import { Shield, LifeBuoy, LogOut, Smartphone, Volume2, Vibrate, Activity, HardDrive } from '@tamagui/lucide-icons';
 
 const GITHUB_REPO_URL = 'https://github.com/Bobr-Soft/depo';
 const GITHUB_DISCUSSIONS_URL = `${GITHUB_REPO_URL}/discussions`;
@@ -244,6 +245,9 @@ export default function ProfileScreen() {
         </YStack>
       </Card>
 
+      {/* SYNC STATUS BANNER */}
+      <SyncStatusBanner />
+
       {/* KPI WIDGET */}
       <YStack gap="$2">
         <Text fontSize={14} fontWeight="600" color={colors.textSecondary} marginLeft="$2" textTransform="uppercase">Napi teljesítmény</Text>
@@ -272,7 +276,7 @@ export default function ProfileScreen() {
               Rendszerállapot
             </Button>
             <Button size="$3" theme="gray" variant="outlined" onPress={() => router.push('/picking')}>Feladat kiosztás</Button>
-            <Button size="$3" theme="gray" variant="outlined" onPress={() => router.push('/inbound')}>Felhasználók</Button>
+            <Button size="$3" theme="gray" variant="outlined" onPress={() => router.push('/admin/users')}>Felhasználók</Button>
           </ScrollView>
         </YStack>
       )}

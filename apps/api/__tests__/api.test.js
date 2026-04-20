@@ -6,7 +6,7 @@
 process.env.JWT_SECRET = 'test-secret';
 
 jest.mock('../db', () => ({
-  query: jest.fn().mockResolvedValue([[{ 1: 1 }], []]),
+  query: jest.fn().mockResolvedValue([[{ id: 1, email: 'test@example.com', role: 'admin' }], []]),
   getConnection: jest.fn(),
 }));
 
@@ -46,11 +46,10 @@ function createMockConnection(queryResults = []) {
 
 const adminToken = makeToken({ role: 'Admin' });
 const workerToken = makeToken({ role: 'Worker' });
-const supervisorToken = makeToken({ role: 'Supervisor' });
 
 beforeEach(() => {
   jest.clearAllMocks();
-  db.query.mockResolvedValue([[{ 1: 1 }], []]);
+  db.query.mockImplementation(defaultQueryMock);
   db.getConnection.mockReset();
 });
 
@@ -142,7 +141,7 @@ describe('GET /me', () => {
   test('200 returns user from token', async () => {
     const res = await request(app).get('/me').set('Authorization', `Bearer ${adminToken}`);
     expect(res.status).toBe(200);
-    expect(res.body.user).toHaveProperty('email', 'test@example.com');
+    expect(res.body.user).toHaveProperty('email', 'admin@example.com');
   });
 });
 
@@ -747,7 +746,7 @@ describe('PUT /tasks/:taskId/status', () => {
   });
 
   test('403 for unrelated worker', async () => {
-    const unrelatedToken = makeToken({ userId: '99', role: 'Worker' });
+    const unrelatedToken = makeToken({ email: 'unrelated-worker@example.com', userId: '99', role: 'Worker' });
 
     const connection = createMockConnection([
       [[{ id: 1, assigned_user: 2, status: 'pending' }], []],
@@ -786,7 +785,7 @@ describe('PUT /tasks/:taskId/items/:itemId/picked', () => {
 
   test('200 updates picked quantity and completes task when all items picked', async () => {
     const connection = createMockConnection([
-      [[{ id: 10, requested_quantity: 5, picked_quantity: 0, assigned_user: 1, assigned_email: 'test@example.com' }], []],
+      [[{ id: 10, requested_quantity: 5, picked_quantity: 0, assigned_user: 1, assigned_email: 'worker@example.com' }], []],
       [{ affectedRows: 1 }, []],
       [{ affectedRows: 1 }, []],
       [[{ totalItems: 1, pickedItems: 1 }], []],

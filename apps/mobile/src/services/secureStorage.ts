@@ -30,15 +30,27 @@ export function buildApiUrl(baseUrl: string, path: string): string {
 // ─── Token ──────────────────────────────────────────────────────────────────
 
 export async function getToken(): Promise<string | null> {
-  return SecureStore.getItemAsync(STORAGE_KEYS.AUTH_TOKEN);
+  try {
+    return await SecureStore.getItemAsync(STORAGE_KEYS.AUTH_TOKEN);
+  } catch {
+    return null;
+  }
 }
 
 export async function setToken(token: string): Promise<void> {
-  return SecureStore.setItemAsync(STORAGE_KEYS.AUTH_TOKEN, token);
+  try {
+    await SecureStore.setItemAsync(STORAGE_KEYS.AUTH_TOKEN, token);
+  } catch {
+    // Silently fail
+  }
 }
 
 export async function deleteToken(): Promise<void> {
-  return SecureStore.deleteItemAsync(STORAGE_KEYS.AUTH_TOKEN);
+  try {
+    await SecureStore.deleteItemAsync(STORAGE_KEYS.AUTH_TOKEN);
+  } catch {
+    // Silently fail
+  }
 }
 
 // ─── API URL ─────────────────────────────────────────────────────────────────
@@ -48,76 +60,132 @@ export async function deleteToken(): Promise<void> {
  * Call setApiUrl() from a settings screen to override it at runtime.
  */
 export async function getApiUrl(): Promise<string> {
-  const stored = await SecureStore.getItemAsync(STORAGE_KEYS.API_URL);
-  return normalizeApiBaseUrl(stored ?? DEFAULT_API_URL);
+  try {
+    const stored = await SecureStore.getItemAsync(STORAGE_KEYS.API_URL);
+    return normalizeApiBaseUrl(stored ?? DEFAULT_API_URL);
+  } catch {
+    return normalizeApiBaseUrl(DEFAULT_API_URL);
+  }
 }
 
 export async function setApiUrl(url: string): Promise<void> {
-  return SecureStore.setItemAsync(STORAGE_KEYS.API_URL, normalizeApiBaseUrl(url));
+  try {
+    await SecureStore.setItemAsync(STORAGE_KEYS.API_URL, normalizeApiBaseUrl(url));
+  } catch {
+    // Silently fail
+  }
 }
 
 // ─── User email ──────────────────────────────────────────────────────────────
 
 export async function getUserEmail(): Promise<string | null> {
-  return SecureStore.getItemAsync(STORAGE_KEYS.USER_EMAIL);
+  try {
+    return await SecureStore.getItemAsync(STORAGE_KEYS.USER_EMAIL);
+  } catch {
+    return null;
+  }
 }
 
 export async function setUserEmail(email: string): Promise<void> {
-  return SecureStore.setItemAsync(STORAGE_KEYS.USER_EMAIL, email);
+  try {
+    await SecureStore.setItemAsync(STORAGE_KEYS.USER_EMAIL, email);
+  } catch {
+    // Silently fail
+  }
 }
 
 export async function deleteUserEmail(): Promise<void> {
-  return SecureStore.deleteItemAsync(STORAGE_KEYS.USER_EMAIL);
+  try {
+    await SecureStore.deleteItemAsync(STORAGE_KEYS.USER_EMAIL);
+  } catch {
+    // Silently fail
+  }
 }
 
 // ─── User role ───────────────────────────────────────────────────────────────
 
 export async function getUserRole(): Promise<string | null> {
-  return SecureStore.getItemAsync(STORAGE_KEYS.USER_ROLE);
+  try {
+    return await SecureStore.getItemAsync(STORAGE_KEYS.USER_ROLE);
+  } catch {
+    return null;
+  }
 }
 
 export async function setUserRole(role: string): Promise<void> {
-  return SecureStore.setItemAsync(STORAGE_KEYS.USER_ROLE, role);
+  try {
+    await SecureStore.setItemAsync(STORAGE_KEYS.USER_ROLE, role);
+  } catch {
+    // Silently fail
+  }
 }
 
 export async function deleteUserRole(): Promise<void> {
-  return SecureStore.deleteItemAsync(STORAGE_KEYS.USER_ROLE);
+  try {
+    await SecureStore.deleteItemAsync(STORAGE_KEYS.USER_ROLE);
+  } catch {
+    // Silently fail
+  }
 }
 
 export async function getUserPhotoUrl(): Promise<string | null> {
-  return SecureStore.getItemAsync(STORAGE_KEYS.USER_PHOTO_URL);
+  try {
+    return await SecureStore.getItemAsync(STORAGE_KEYS.USER_PHOTO_URL);
+  } catch {
+    return null;
+  }
 }
 
 export async function setUserPhotoUrl(photoUrl: string): Promise<void> {
-  return SecureStore.setItemAsync(STORAGE_KEYS.USER_PHOTO_URL, photoUrl);
+  try {
+    await SecureStore.setItemAsync(STORAGE_KEYS.USER_PHOTO_URL, photoUrl);
+  } catch {
+    // Silently fail
+  }
 }
 
 export async function deleteUserPhotoUrl(): Promise<void> {
-  return SecureStore.deleteItemAsync(STORAGE_KEYS.USER_PHOTO_URL);
+  try {
+    await SecureStore.deleteItemAsync(STORAGE_KEYS.USER_PHOTO_URL);
+  } catch {
+    // Silently fail
+  }
 }
 
 export async function getScanSoundEnabled(): Promise<boolean> {
-  const value = await SecureStore.getItemAsync(STORAGE_KEYS.SCAN_SOUND_ENABLED);
-  if (value === null) {
+  try {
+    const value = await SecureStore.getItemAsync(STORAGE_KEYS.SCAN_SOUND_ENABLED);
+    if (value === null) return true;
+    return value === 'true';
+  } catch {
     return true;
   }
-  return value === 'true';
 }
 
 export async function setScanSoundEnabled(enabled: boolean): Promise<void> {
-  return SecureStore.setItemAsync(STORAGE_KEYS.SCAN_SOUND_ENABLED, String(enabled));
+  try {
+    return await SecureStore.setItemAsync(STORAGE_KEYS.SCAN_SOUND_ENABLED, String(enabled));
+  } catch {
+    // Silently fail if secure store is unavailable
+  }
 }
 
 export async function getHapticFeedbackEnabled(): Promise<boolean> {
-  const value = await SecureStore.getItemAsync(STORAGE_KEYS.HAPTIC_FEEDBACK_ENABLED);
-  if (value === null) {
+  try {
+    const value = await SecureStore.getItemAsync(STORAGE_KEYS.HAPTIC_FEEDBACK_ENABLED);
+    if (value === null) return true;
+    return value === 'true';
+  } catch {
     return true;
   }
-  return value === 'true';
 }
 
 export async function setHapticFeedbackEnabled(enabled: boolean): Promise<void> {
-  return SecureStore.setItemAsync(STORAGE_KEYS.HAPTIC_FEEDBACK_ENABLED, String(enabled));
+  try {
+    return await SecureStore.setItemAsync(STORAGE_KEYS.HAPTIC_FEEDBACK_ENABLED, String(enabled));
+  } catch {
+    // Silently fail if secure store is unavailable
+  }
 }
 
 // ─── Utility ─────────────────────────────────────────────────────────────────

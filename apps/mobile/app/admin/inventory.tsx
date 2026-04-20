@@ -4,13 +4,15 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ScrollView, YStack, XStack, Button, Text, H2, Card, Separator, Spinner } from "@repo/ui";
 import { ArrowLeft, Boxes, RefreshCw, Trash2, Edit3, AlertCircle, Plus, AlertTriangle } from "@tamagui/lucide-icons";
 import { router } from "expo-router";
-import { adminGetItems, adminUpdateItem, adminDeleteItem, adminCreateItem, type ApiItem } from "@/components/adminApi";
+import { adminGetItems, adminUpdateItem, adminDeleteItem, adminCreateItem, adminGetCategories, adminGetLocations, type ApiItem, type ApiCategory, type WarehouseLocationApi } from "@/components/adminApi";
 import { useSyncStatus } from "@/hooks";
 
 export default function AdminInventoryScreen() {
   const insets = useSafeAreaInsets();
   const syncStatus = useSyncStatus();
   const [items, setItems] = useState<ApiItem[]>([]);
+  const [categories, setCategories] = useState<ApiCategory[]>([]);
+  const [locations, setLocations] = useState<WarehouseLocationApi[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -18,7 +20,14 @@ export default function AdminInventoryScreen() {
     setLoading(true);
     setError(null);
     try {
-      setItems(await adminGetItems());
+      const [allItems, allCats, allLocs] = await Promise.all([
+        adminGetItems(),
+        adminGetCategories().catch(() => [] as ApiCategory[]),
+        adminGetLocations().catch(() => [] as WarehouseLocationApi[]),
+      ]);
+      setItems(allItems);
+      setCategories(allCats);
+      setLocations(allLocs);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Nem sikerült betölteni a termékeket.");
     } finally {
@@ -37,25 +46,55 @@ export default function AdminInventoryScreen() {
         Alert.prompt(
           "Vonalkód",
           "Vonalkód (hagyja üresen, ha nincs):",
-          async (barcode) => {
+          (barcode) => {
             Alert.prompt(
               "Induló készlet",
               "Mennyiség (szám):",
-              async (qtyStr) => {
+              (qtyStr) => {
                 const qty = parseInt(qtyStr ?? "0", 10);
-                try {
-                  const created = await adminCreateItem({
-                    name: name.trim(),
-                    barcode: barcode?.trim() || null,
-                    description: null,
-                    quantity: isNaN(qty) ? 0 : qty,
-                    category_id: null,
-                    location_id: null,
-                  });
-                  setItems(prev => [created, ...prev]);
-                } catch (err) {
-                  Alert.alert("Hiba", err instanceof Error ? err.message : "Nem sikerült létrehozni.");
-                }
+
+                // Build category hint
+                const catHint = categories.length > 0
+                  ? `Elérhető: ${categories.slice(0, 8).map(c => `${c.id}=${c.name}`).join(', ')}`
+                  : 'Nincs elérhető kategória';
+
+                Alert.prompt(
+                  "Kategória",
+                  `Kategória ID (üresen ha nincs):\n${catHint}`,
+                  (catIdStr) => {
+                    const catId = catIdStr?.trim() ? parseInt(catIdStr.trim(), 10) : null;
+
+                    // Build location hint
+                    const locHint = locations.length > 0
+                      ? `Elérhető: ${locations.slice(0, 8).map(l => `${l.id}=${l.location_code}`).join(', ')}`
+                      : 'Nincs elérhető lokáció';
+
+                    Alert.prompt(
+                      "Lokáció",
+                      `Lokáció ID (üresen ha nincs):\n${locHint}`,
+                      async (locIdStr) => {
+                        const locId = locIdStr?.trim() ? parseInt(locIdStr.trim(), 10) : null;
+                        try {
+                          const created = await adminCreateItem({
+                            name: name.trim(),
+                            barcode: barcode?.trim() || null,
+                            description: null,
+                            quantity: isNaN(qty) ? 0 : qty,
+                            category_id: catId && !isNaN(catId) ? catId : null,
+                            location_id: locId && !isNaN(locId) ? locId : null,
+                          });
+                          setItems(prev => [created, ...prev]);
+                        } catch (err) {
+                          Alert.alert("Hiba", err instanceof Error ? err.message : "Nem sikerült létrehozni.");
+                        }
+                      },
+                      "plain-text",
+                      ""
+                    );
+                  },
+                  "plain-text",
+                  ""
+                );
               },
               "plain-text",
               "0"

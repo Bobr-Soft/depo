@@ -5,7 +5,7 @@ import { YStack, XStack, Button, Text, H2, Card, ScrollView, Separator, Switch }
 import { ScanBarcode, Package, ArrowLeft, RefreshCw, Trash2, Edit3, Save, CheckCircle2, AlertCircle, MapPin, RotateCcw } from "@tamagui/lucide-icons";
 import { BarcodeScanner } from "@/components";
 import { router, useLocalSearchParams } from "expo-router";
-import { buildApiUrl, getApiUrl, getToken } from "@/services/secureStorage";
+import { buildApiUrl, getApiUrl, getToken, getScanSoundEnabled, getHapticFeedbackEnabled } from "@/services/secureStorage";
 import { isOnline, syncData } from "@/services/sync";
 import { enqueueSyncOperation, getSyncQueue, initDatabase, isDatabaseInitialized, saveInboundDraft, loadInboundDraft, clearInboundDraft } from "@/services/database";
 
@@ -50,6 +50,8 @@ export default function InboundScreen() {
   const [pendingRetryCount, setPendingRetryCount] = useState(0);
   const [summary, setSummary] = useState<SaveSummary | null>(null);
   const [draftRecovered, setDraftRecovered] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [hapticEnabled, setHapticEnabled] = useState(true);
 
   const isProcessing = useRef(false);
   const lastHandledEditNonce = useRef<string | null>(null);
@@ -71,6 +73,13 @@ export default function InboundScreen() {
   }, []);
 
   useEffect(() => { loadPendingRetryCount(); }, [loadPendingRetryCount]);
+
+  useEffect(() => {
+    Promise.all([getScanSoundEnabled(), getHapticFeedbackEnabled()]).then(([s, h]) => {
+      setSoundEnabled(s);
+      setHapticEnabled(h);
+    });
+  }, []);
 
   // Load persisted draft on mount
   useEffect(() => {
@@ -223,7 +232,9 @@ export default function InboundScreen() {
         await clearInboundDraft();
         setSummary(batchSummary);
         await loadPendingRetryCount();
-        Alert.alert("Offline mentés", "Nincs internetkapcsolat. A tételek a várólistára kerültek. Amint online leszel, a rendszer megkísérli lefoglalni a lokációkat.");
+        Alert.alert("Offline mentés", "Nincs internetkapcsolat. A tételek a várólistára kerültek. Amint online leszel, a rendszer megkísérli lefoglalni a lokációkat.",
+          [{ text: "Rendben", onPress: () => router.replace('/(tabs)') }]
+        );
         return;
       }
 
@@ -285,12 +296,13 @@ export default function InboundScreen() {
         setScannedItems(updatedItemsList);
         Alert.alert("Részleges mentés", `Sikeres kiosztás: ${batchSummary.successful}\nSikertelen (pl. tele a raktár): ${batchSummary.failed}\nVárólistára tett: ${batchSummary.queued}`);
       } else {
-        // Ha minden sikeres, frissítjük a UI-t, hogy lássa a lokációkat, de a "Mentés" gomb eltűnik (vagy lecserélődik)
-        setScannedItems(updatedItemsList);
+        // Ha minden sikeres, töröljük a listát és navigálunk a főoldalra
+        setScannedItems([]);
+        await clearInboundDraft();
         Alert.alert(
           "Lokációk lefoglalva",
           `${batchSummary.successful} tételhez sikeresen kijelöltük a cél polcokat. Kérjük, vidd a tételeket a kijelölt helyekre.`,
-          [{ text: "Megértettem", style: "default" }]
+          [{ text: "Megértettem", onPress: () => router.replace('/(tabs)') }]
         );
       }
     } catch (error) {
@@ -346,6 +358,8 @@ export default function InboundScreen() {
         title="Termék bevételezés"
         instruction="Szkenneld be az érkező áru vonalkódját"
         autoResetDelay={0}
+        enableSound={soundEnabled}
+        enableHaptics={hapticEnabled}
       />
     );
   }

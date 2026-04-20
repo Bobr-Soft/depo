@@ -188,68 +188,6 @@ export async function releaseTask(taskId: number): Promise<boolean> {
 }
 
 /**
- * Requests a putaway location allocation from the backend.
- * Automatically handles token refresh loops.
- */
-export async function allocatePutaway(barcode: string, quantity: number, isXl: boolean): Promise<string | null> {
-  try {
-    const [storedToken, apiUrl] = await Promise.all([getToken(), getApiUrl()]);
-    let token = storedToken;
-    let retriedWithReauth = false;
-
-    if (!token || !apiUrl) {
-      throw new Error('Missing auth token or API URL');
-    }
-
-    if (token === DEV_BYPASS_TOKEN) {
-      return "01-01-01"; // Mock location
-    }
-
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      const response = await fetch(buildApiUrl(apiUrl, '/inbound/putaway'), {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ barcode, quantity, isXl }),
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        return data.location_code;
-      }
-
-      if ((response.status === 401 || response.status === 403) && !retriedWithReauth) {
-        const reauthResult = await reauthenticateSilently();
-        if (!reauthResult.success) {
-          await logout();
-          throw new Error('Authentication failed');
-        }
-
-        const refreshedToken = reauthResult.token ?? await getToken();
-        if (!refreshedToken) {
-          await logout();
-          throw new Error('Failed to retrieve token after reauth');
-        }
-
-        token = refreshedToken;
-        retriedWithReauth = true;
-        continue;
-      }
-
-      const errorText = await response.text().catch(() => 'Unknown error');
-      throw new Error(`Allocation failed: ${response.status} - ${errorText}`);
-    }
-
-    return null;
-  } catch (error) {
-    console.error('Failed to allocate putaway location:', error);
-    throw error;
-  }
-}
-
-/**
  * Assign a task to a specific user (supervisor/admin only).
  */
 export async function assignTask(taskId: number, userId: number): Promise<boolean> {
