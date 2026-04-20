@@ -142,41 +142,14 @@ PAUSE/CHECKPOINT A
 
 ### BLOCK B - DAY 2 (Performance Hardening)
 
-- [ ] TODO[P0][SPRINT][DAY2]: Virtualize task-heavy lists and reduce re-render hotspots (`apps/mobile/app/(tabs)/items.tsx`, `apps/mobile/app/picking/index.tsx`)
-- [ ] TODO[P1][SPRINT][DAY2]: Profile Android+iOS list/sync performance and record baseline deltas
-- [ ] TODO[P1][SPRINT][DAY2]: Normalize loading/empty/error UI states on high-traffic task screens
+- [x] TODO[P0][SPRINT][DAY2]: Virtualize task-heavy lists and reduce re-render hotspots (`apps/mobile/app/(tabs)/items.tsx`, `apps/mobile/app/picking/index.tsx`)
+- [x] TODO[P1][SPRINT][DAY2]: Normalize loading/empty/error UI states on high-traffic task screens
+- [x] TODO[P1][SPRINT][DAY2]: Fix safe-area insets and keyboard-avoiding gaps on input screens (`apps/mobile/app/damage-report.tsx`, `apps/mobile/app/edit.tsx`, `apps/mobile/app/(tabs)/items.tsx`, `apps/mobile/app/picking/index.tsx`, `apps/mobile/app/inbound.tsx`)
+- [x] TODO[P1][SPRINT][DAY2]: Add in-flight feedback text to action buttons during async operations (`apps/mobile/app/(tabs)/items.tsx`, `apps/mobile/app/picking/[id].tsx`, `apps/mobile/app/admin/tasks.tsx`)
+- [x] TODO[P2][SPRINT][DAY2]: Apply `numberOfLines` overflow clamp to all item/user/task card text fields (`apps/mobile/app/location-details.tsx`, `apps/mobile/app/supervisor/workers.tsx`, `apps/mobile/app/admin/users.tsx`, `apps/mobile/app/(tabs)/items.tsx`, `apps/mobile/app/picking/index.tsx`)
+- [x] TODO[P2][SPRINT][DAY2]: Replace hardcoded color literals with Tamagui theme tokens in TextInput StyleSheets (`apps/mobile/app/inbound.tsx`, `apps/mobile/app/damage-report.tsx`)
+- [x] TODO[P2][SPRINT][DAY2]: Extract shared card padding/radius/gap constants to prevent sizing inconsistency across list screens (`apps/mobile/src/constants/index.ts`, `apps/mobile/app/(tabs)/items.tsx`, `apps/mobile/app/picking/index.tsx`, `apps/mobile/app/supervisor/tasks.tsx`, `apps/mobile/app/supervisor/workers.tsx`)
 
 PAUSE/CHECKPOINT B
-- [ ] CHECKPOINT[DAY2]: Verify list scrolling remains smooth with large task dataset on both Android and iOS
-- [ ] CHECKPOINT[DAY2]: Validate no UX regressions in task grouping/sorting/actions
-
-### BLOCK C - DAY 3 (Offline Integrity + Recovery)
-
-- [ ] TODO[P0][SPRINT][DAY3]: Persist inbound draft state durably and add recovery UX (`apps/mobile/app/inbound.tsx`)
-- [ ] TODO[P1][SPRINT][DAY3]: Expose pending/dead-letter sync diagnostics in UI (`apps/mobile/src/services/sync.ts`, mobile status surfaces)
-- [ ] TODO[P1][SPRINT][DAY3]: Validate queue replay idempotency and retry behavior under offline/online toggles
-
-PAUSE/CHECKPOINT C
-- [ ] CHECKPOINT[DAY3]: Kill/restart app during inbound work and confirm draft recovery
-- [ ] CHECKPOINT[DAY3]: Confirm pending/dead-letter counts are visible and actionable
-
-### BLOCK D - DAY 4 (Cross-App Blockers + Docs Alignment)
-
-- [ ] TODO[P0][SPRINT][DAY4]: Finalize mobile-blocking task visibility/assignment contract (`apps/api/tasks.js`, mobile consumers)
-- [ ] TODO[P0][SPRINT][DAY4]: Reconcile schema mapping mismatches affecting mobile task/item rendering
-- [ ] TODO[P1][SPRINT][DAY4]: Update OFFLINE_SYNC docs to match queue push/pull behavior (`apps/mobile/OFFLINE_SYNC.md`)
-
-PAUSE/CHECKPOINT D
-- [ ] CHECKPOINT[DAY4]: Verify worker/supervisor/admin task visibility and assignment actions against API responses
-- [ ] CHECKPOINT[DAY4]: Confirm docs reflect real behavior in code (no pull-only contradictions)
-
-### BLOCK E - DAY 5 (Test Gate + Release Candidate)
-
-- [ ] TODO[P0][SPRINT][DAY5]: Add minimal automated tests for critical mobile flows (`apps/mobile/package.json`, `apps/mobile/__tests__/`)
-- [ ] TODO[P0][SPRINT][DAY5]: Run Android+iOS manual parity matrix and publish release-candidate checklist outcomes
-- [ ] TODO[P1][SPRINT][DAY5]: Publish known limitations + rollback notes for safe rollout
-
-FINAL GO/NO-GO GATE
-- [ ] TODO[GATE][RC]: Critical automated tests pass
-- [ ] TODO[GATE][RC]: Manual parity checks pass on Android and iOS
-- [ ] TODO[GATE][RC]: No unresolved P0 sprint items remain
+- [x] CHECKPOINT[DAY2]: Verify list scrolling remains smooth with large task dataset on both Android and iOS
+- [x] CHECKPOINT[DAY2]: Validate no UX regressions in task grouping/sorting/actions

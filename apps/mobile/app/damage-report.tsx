@@ -1,7 +1,7 @@
 import React, { useState } from "react";
-import { Alert, TextInput, StyleSheet } from "react-native";
+import { Alert, KeyboardAvoidingView, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { ScrollView, YStack, XStack, Button, Text, H2, Card, Separator } from "@repo/ui";
+import { ScrollView, YStack, XStack, Button, Text, H2, Card, Separator, Input, TextArea } from "@repo/ui";
 import { ArrowLeft, AlertTriangle, ScanBarcode, Send, CheckCircle2 } from "@tamagui/lucide-icons";
 import { router, useLocalSearchParams } from "expo-router";
 import { buildApiUrl, getApiUrl, getToken } from "@/services/secureStorage";
@@ -146,7 +146,8 @@ export default function DamageReportScreen() {
           </XStack>
         </YStack>
       ) : (
-        <ScrollView flex={1} keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
+        <ScrollView flex={1} keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: 16, paddingBottom: Math.max(40, insets.bottom + 40) }}>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={insets.top + 16}>
           <YStack gap="$4">
 
             {/* VONALKÓD */}
@@ -156,14 +157,13 @@ export default function DamageReportScreen() {
               <XStack gap="$3" alignItems="center">
                 <YStack flex={1}>
                   <Text fontSize={12} color="$color10" marginBottom="$1">Vonalkód (opcionális)</Text>
-                  <TextInput
+                  <Input
                     value={barcode}
                     onChangeText={setBarcode}
                     placeholder="Vonalkód beolvasva vagy kézi bevitel"
-                    placeholderTextColor="#666"
-                    style={styles.input}
                     autoCapitalize="none"
                     autoCorrect={false}
+                    size="$4"
                   />
                 </YStack>
                 <Button
@@ -177,13 +177,12 @@ export default function DamageReportScreen() {
 
               <YStack>
                 <Text fontSize={12} color="$color10" marginBottom="$1">Megnevezés (opcionális)</Text>
-                <TextInput
+                <Input
                   value={itemName}
                   onChangeText={setItemName}
                   placeholder="pl. Csavar M6x30, kartondoboz..."
-                  placeholderTextColor="#666"
-                  style={styles.input}
                   autoCapitalize="sentences"
+                  size="$4"
                 />
               </YStack>
             </Card>
@@ -193,16 +192,13 @@ export default function DamageReportScreen() {
               <Text fontSize={14} fontWeight="600" color="$color11">
                 Kár leírása <Text color="$red10">*</Text>
               </Text>
-              <TextInput
+              <TextArea
                 value={description}
                 onChangeText={setDescription}
                 placeholder="Írja le a sérülés jellegét, mértékét, körülményeit..."
-                placeholderTextColor="#666"
-                style={[styles.input, styles.textarea]}
-                multiline
                 numberOfLines={5}
-                textAlignVertical="top"
                 maxLength={1000}
+                size="$4"
               />
               <Text fontSize={11} color="$color9" textAlign="right">
                 {description.length}/1000
@@ -222,25 +218,9 @@ export default function DamageReportScreen() {
             </Button>
 
           </YStack>
+          </KeyboardAvoidingView>
         </ScrollView>
       )}
     </YStack>
   );
 }
-
-const styles = StyleSheet.create({
-  input: {
-    backgroundColor: "#1a1a2e",
-    color: "#e0e0e0",
-    borderWidth: 1,
-    borderColor: "#333",
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 14,
-  },
-  textarea: {
-    minHeight: 120,
-    paddingTop: 10,
-  },
-});

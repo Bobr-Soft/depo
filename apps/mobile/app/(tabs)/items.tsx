@@ -1,10 +1,14 @@
 import { useCallback, useMemo, useState } from 'react';
+import { SectionList } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useFocusEffect } from 'expo-router';
 import { RefreshCw, WifiOff, Package, Clock, AlertCircle, ChevronDown, ChevronRight } from '@tamagui/lucide-icons';
 import { H2, Text, YStack, XStack, Button, Card, ScrollView, Spinner, Separator } from '@repo/ui';
 import { useSyncStatus } from '@/hooks';
-import { TaskComplete } from '@/constants/types';
+import { TaskComplete, CARD } from '@/constants';
 import loadTasks, { refreshTasks, releaseTask, takeTask } from '@/components/api';
+
+type TaskSection = { order: number; label: string; theme: { bg: string; text: string }; key: string; data: TaskComplete[] };
 
 const NON_RELEASABLE_STATUSES = new Set(['completed', 'done', 'delivered', 'cancelled']);
 
@@ -50,6 +54,7 @@ export default function ItemsScreen() {
   const [acceptingTaskId, setAcceptingTaskId] = useState<number | null>(null);
 
   const syncStatus = useSyncStatus();
+  const insets = useSafeAreaInsets();
 
   const [expandedGroups, setExpandedGroups] = useState<Record<number, boolean>>({
     0: false,
@@ -93,6 +98,24 @@ export default function ItemsScreen() {
       return bUpd - aUpd;
     });
   }, [sortMode, tasks]);
+
+  const sections = useMemo((): TaskSection[] => {
+    const groups = new Map<number, TaskComplete[]>();
+    for (const task of orderedTasks) {
+      const order = getTaskWorkflowOrder(task);
+      if (!groups.has(order)) groups.set(order, []);
+      groups.get(order)!.push(task);
+    }
+    return Array.from(groups.entries())
+      .sort(([a], [b]) => a - b)
+      .map(([order, groupTasks]) => ({
+        key: String(order),
+        order,
+        label: getTaskWorkflowLabel(groupTasks[0]),
+        theme: getTaskWorkflowTheme(groupTasks[0]),
+        data: (expandedGroups[order] ?? true) ? groupTasks : [],
+      }));
+  }, [orderedTasks, expandedGroups]);
 
   const fetchTasks = useCallback(async () => {
     setLoading(true);
@@ -185,6 +208,12 @@ export default function ItemsScreen() {
             <Text fontSize={12} color="$blue10">{syncStatus.pendingOperations} várakozó módosítás</Text>
           </XStack>
         )}
+        {syncStatus.deadLetterOperations > 0 && (
+          <XStack backgroundColor="$red5" padding="$2" borderRadius="$3" alignItems="center" gap="$2">
+            <AlertCircle size={14} color="$red10" />
+            <Text fontSize={12} color="$red10">{syncStatus.deadLetterOperations} sikertelen művelet</Text>
+          </XStack>
+        )}
       </YStack>
 
       {/* QUICK MENUS & SORTING TOOLBAR */}
@@ -200,138 +229,123 @@ export default function ItemsScreen() {
       </YStack>
 
       {/* MAIN LIST SECTION */}
-      <ScrollView flex={1} contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
-        {loading || refreshing ? (
-          <YStack flex={1} justifyContent="center" alignItems="center" paddingVertical="$10">
-            <Spinner size="large" />
-          </YStack>
-        ) : error ? (
-          <YStack flex={1} gap="$3" justifyContent="center" alignItems="center" paddingVertical="$10">
-            <AlertCircle size={32} color="$red10" />
-            <Text fontSize={14} color="$red10" textAlign="center">{error}</Text>
-            <Button size="$3" onPress={fetchTasks}>Újrapróbálkozás</Button>
-          </YStack>
-        ) : orderedTasks.length > 0 ? (
-          orderedTasks.map((task, index) => {
-            const workflowOrder = getTaskWorkflowOrder(task);
-            const workflowLabel = getTaskWorkflowLabel(task);
-            const workflowTheme = getTaskWorkflowTheme(task);
-            const previousTask = index > 0 ? orderedTasks[index - 1] : null;
-            const isNewGroup = !previousTask || getTaskWorkflowOrder(previousTask) !== workflowOrder;
-
-            const isExpanded = expandedGroups[workflowOrder];
+      {loading || refreshing ? (
+        <YStack flex={1} justifyContent="center" alignItems="center" paddingVertical="$10">
+          <Spinner size="large" />
+        </YStack>
+      ) : error ? (
+        <YStack flex={1} gap="$3" justifyContent="center" alignItems="center" paddingVertical="$10">
+          <AlertCircle size={32} color="$red10" />
+          <Text fontSize={14} color="$red10" textAlign="center">{error}</Text>
+          <Button size="$3" onPress={fetchTasks}>Újrapróbálkozás</Button>
+        </YStack>
+      ) : (
+        <SectionList<TaskComplete, TaskSection>
+          style={{ flex: 1 }}
+          contentContainerStyle={{ padding: 16, paddingBottom: Math.max(40, insets.bottom + 16) }}
+          sections={sections}
+          keyExtractor={(item) => String(item.id)}
+          stickySectionHeadersEnabled={false}
+          initialNumToRender={12}
+          maxToRenderPerBatch={8}
+          windowSize={7}
+          removeClippedSubviews={true}
+          renderSectionHeader={({ section }) => (
+            <XStack
+              alignItems="center"
+              justifyContent="space-between"
+              marginTop="$2"
+              marginBottom="$2"
+              paddingVertical="$2"
+              paddingHorizontal="$3"
+              backgroundColor="$color3"
+              borderRadius="$3"
+              onPress={() => toggleGroup(section.order)}
+              pressStyle={{ opacity: 0.7, backgroundColor: '$color4' }}
+            >
+              <XStack alignItems="center" gap="$2">
+                <YStack backgroundColor={section.theme.bg} paddingHorizontal="$2" paddingVertical="$1" borderRadius="$3">
+                  <Text fontSize={11} fontWeight="700" color={section.theme.text} textTransform="uppercase">
+                    {section.label}
+                  </Text>
+                </YStack>
+              </XStack>
+              <Button
+                size="$2"
+                circular
+                chromeless
+                icon={(expandedGroups[section.order] ?? true) ? ChevronDown : ChevronRight}
+                onPress={() => toggleGroup(section.order)}
+              />
+            </XStack>
+          )}
+          renderItem={({ item: task }) => {
             const isAssignable = task.assigned_user == null && String(task.status).toLowerCase() === 'pending';
-
             return (
-              <YStack key={task.id}>
-                {/* COLLAPSIBLE GROUP HEADER */}
-                {isNewGroup && (
-                  <XStack
-                    alignItems="center"
-                    justifyContent="space-between"
-                    marginTop={index === 0 ? '$0' : '$4'}
-                    marginBottom="$2"
-                    paddingVertical="$2"
-                    paddingHorizontal="$3"
-                    backgroundColor="$color3"
-                    borderRadius="$3"
-                    onPress={() => toggleGroup(workflowOrder)}
-                    pressStyle={{ opacity: 0.7, backgroundColor: "$color4" }}
-                  >
-                    <XStack alignItems="center" gap="$2">
-                      <YStack backgroundColor={workflowTheme.bg} paddingHorizontal="$2" paddingVertical="$1" borderRadius="$3">
-                        <Text fontSize={11} fontWeight="700" color={workflowTheme.text} textTransform="uppercase">
-                          {workflowLabel}
-                        </Text>
-                      </YStack>
-                    </XStack>
-                    <Button
-                      size="$2"
-                      circular
-                      chromeless
-                      icon={isExpanded ? ChevronDown : ChevronRight}
-                      onPress={() => toggleGroup(workflowOrder)}
-                    />
+              <Card backgroundColor="$color3" marginBottom="$3" borderRadius={CARD.radius} padding={CARD.padding} borderWidth={1} borderColor={CARD.border}>
+                <YStack gap="$2">
+                  <XStack justifyContent="space-between" alignItems="center">
+                    <Text fontWeight="700" fontSize={16} color="$color12" numberOfLines={1} flex={1} marginRight="$2">{task.source_id ?? 'Nincs forrás'}</Text>
+                    <Text fontSize={12} color="$color10" textTransform="capitalize">{String(task.status)}</Text>
                   </XStack>
-                )}
-
-                {/* TASK CARD */}
-                {isExpanded && (
-                  <Card backgroundColor="$color3" marginBottom="$3" borderRadius="$4" padding="$3" borderWidth={1} borderColor="$color4">
-                    <YStack gap="$2">
-                      {/* Card Top Row */}
-                      <XStack justifyContent="space-between" alignItems="center">
-                        <Text fontWeight="700" fontSize={16} color="$color12">{task.source_id ?? 'Nincs forrás'}</Text>
-                        <Text fontSize={12} color="$color10" textTransform="capitalize">{String(task.status)}</Text>
-                      </XStack>
-
-                      {/* Card Middle Row (Grid-like info) */}
-                      <XStack gap="$4" marginTop="$1">
-                        <XStack gap="$1.5" alignItems="center">
-                          <Package size={14} color="$color10" />
-                          <Text fontSize={13} color="$color11">{task.items.length} tétel</Text>
-                        </XStack>
-                        <XStack gap="$1.5" alignItems="center">
-                          <AlertCircle size={14} color={task.priority === 1 ? '$red10' : task.priority === 2 ? '$yellow10' : '$green10'} />
-                          <Text fontSize={13} fontWeight="600" color={task.priority === 1 ? '$red10' : task.priority === 2 ? '$yellow10' : '$green10'}>
-                            {task.priority === 1 ? 'Kritikus' : task.priority === 2 ? 'Magas' : task.priority === 3 ? 'Normál' : 'Alacsony'}
-                          </Text>
-                        </XStack>
-                      </XStack>
-
-                      <XStack gap="$1.5" alignItems="center">
-                        <Clock size={14} color="$color10" />
-                        <Text fontSize={12} color="$color11">
-                          {task.deadline
-                            ? `${new Date(task.deadline).toLocaleTimeString()} (${Math.max(0, Math.round((new Date(task.deadline).getTime() - Date.now()) / 60000))}p hátra)`
-                            : 'Nincs határidő'}
-                        </Text>
-                      </XStack>
-
-                      {/* Card Actions */}
-                      <XStack marginTop="$2" gap="$2" justifyContent="flex-end">
-                        {/* QUICK ACCEPT */}
-                        {isAssignable && (
-                          <Button
-                            size="$3"
-                            theme="green"
-                            disabled={acceptingTaskId === task.id || !syncStatus.isOnline}
-                            onPress={() => handleAccept(task)}
-                          >
-                            {acceptingTaskId === task.id ? 'Felvétel...' : 'Felveszem'}
-                          </Button>
-                        )}
-
-                        {/* RELEASE */}
-                        {task.assigned_user !== null && !NON_RELEASABLE_STATUSES.has(String(task.status)) && (
-                          <Button
-                            size="$3"
-                            theme="orange"
-                            variant="outlined"
-                            disabled={releasingTaskId === task.id || !syncStatus.isOnline}
-                            onPress={() => handleRelease(task)}
-                          >
-                            {releasingTaskId === task.id ? 'Leadás...' : 'Leadás'}
-                          </Button>
-                        )}
-
-                        <Button size="$3" theme="blue" onPress={() => router.push({ pathname: '/picking/[id]', params: { id: task.id } })}>
-                          Megnyitás
-                        </Button>
-                      </XStack>
-                    </YStack>
-                  </Card>
-                )}
-              </YStack>
+                  <XStack gap="$4" marginTop="$1">
+                    <XStack gap="$1.5" alignItems="center">
+                      <Package size={14} color="$color10" />
+                      <Text fontSize={13} color="$color11">{task.items.length} tétel</Text>
+                    </XStack>
+                    <XStack gap="$1.5" alignItems="center">
+                      <AlertCircle size={14} color={task.priority === 1 ? '$red10' : task.priority === 2 ? '$yellow10' : '$green10'} />
+                      <Text fontSize={13} fontWeight="600" color={task.priority === 1 ? '$red10' : task.priority === 2 ? '$yellow10' : '$green10'}>
+                        {task.priority === 1 ? 'Kritikus' : task.priority === 2 ? 'Magas' : task.priority === 3 ? 'Normál' : 'Alacsony'}
+                      </Text>
+                    </XStack>
+                  </XStack>
+                  <XStack gap="$1.5" alignItems="center">
+                    <Clock size={14} color="$color10" />
+                    <Text fontSize={12} color="$color11" numberOfLines={1}>
+                      {task.deadline
+                        ? `${new Date(task.deadline).toLocaleTimeString()} (${Math.max(0, Math.round((new Date(task.deadline).getTime() - Date.now()) / 60000))}p hátra)`
+                        : 'Nincs határidő'}
+                    </Text>
+                  </XStack>
+                  <XStack marginTop="$2" gap="$2" justifyContent="flex-end">
+                    {isAssignable && (
+                      <Button
+                        size="$3"
+                        theme="green"
+                        disabled={acceptingTaskId === task.id || !syncStatus.isOnline}
+                        onPress={() => handleAccept(task)}
+                      >
+                        {acceptingTaskId === task.id ? 'Felvétel...' : 'Felveszem'}
+                      </Button>
+                    )}
+                    {task.assigned_user !== null && !NON_RELEASABLE_STATUSES.has(String(task.status)) && (
+                      <Button
+                        size="$3"
+                        theme="orange"
+                        variant="outlined"
+                        disabled={releasingTaskId === task.id || !syncStatus.isOnline}
+                        onPress={() => handleRelease(task)}
+                      >
+                        {releasingTaskId === task.id ? 'Leadás...' : 'Leadás'}
+                      </Button>
+                    )}
+                    <Button size="$3" theme="blue" onPress={() => router.push({ pathname: '/picking/[id]', params: { id: task.id } })}>
+                      Megnyitás
+                    </Button>
+                  </XStack>
+                </YStack>
+              </Card>
             );
-          })
-        ) : (
-          <YStack flex={1} gap="$3" justifyContent="center" alignItems="center" paddingVertical="$10">
-            <Package size={48} color="$color8" />
-            <Text fontSize={16} color="$color10" textAlign="center">Nincsenek aktív feladatok</Text>
-          </YStack>
-        )}
-      </ScrollView>
+          }}
+          ListEmptyComponent={
+            <YStack flex={1} gap="$3" justifyContent="center" alignItems="center" paddingVertical="$10">
+              <Package size={48} color="$color8" />
+              <Text fontSize={16} color="$color10" textAlign="center">Nincsenek aktív feladatok</Text>
+            </YStack>
+          }
+        />
+      )}
     </YStack>
   );
 }

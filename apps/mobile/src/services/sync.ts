@@ -473,8 +473,19 @@ async function pushSyncQueue(token: string, apiUrl: string): Promise<void> {
 
   console.log(`Processing ${queue.length} pending sync operations...`);
 
+  // Track idempotency keys processed in this push cycle to skip duplicates
+  const processedKeys = new Set<string>();
+
   for (const operation of queue) {
     try {
+      // Skip if we've already processed this idempotency key in this cycle
+      const idempotencyKey = (operation as any).idempotency_key;
+      if (idempotencyKey && processedKeys.has(idempotencyKey)) {
+        console.log(`Skipping duplicate idempotency key: ${idempotencyKey}`);
+        await db.removeSyncOperation(operation.id);
+        continue;
+      }
+
       const payload = JSON.parse(operation.payload);
       const nextAttempt = (operation.retry_count ?? 0) + 1;
 
@@ -500,6 +511,7 @@ async function pushSyncQueue(token: string, apiUrl: string): Promise<void> {
           }
 
           console.log(`✅ Synced task create operation ${operation.id}`);
+          if (idempotencyKey) processedKeys.add(idempotencyKey);
           await db.removeSyncOperation(operation.id);
         } catch (apiError) {
           if (apiError instanceof ApiSyncError && isNonRetryableStatus(apiError.statusCode)) {
@@ -622,6 +634,7 @@ async function pushSyncQueue(token: string, apiUrl: string): Promise<void> {
         try {
           await upsertInboundItem(token, apiUrl, payload as InboundItemUpsertPayload);
           console.log(`✅ Synced inbound item operation ${operation.id}`);
+          if (idempotencyKey) processedKeys.add(idempotencyKey);
           await db.removeSyncOperation(operation.id);
         } catch (apiError) {
           if (apiError instanceof ApiSyncError && isNonRetryableStatus(apiError.statusCode)) {

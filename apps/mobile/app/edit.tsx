@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert } from "react-native";
+import { Alert, KeyboardAvoidingView, Platform } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router, useLocalSearchParams } from "expo-router";
-import { YStack, XStack, Text, H3, Button, Card, Input, Separator, Spinner } from "@repo/ui";
+import { YStack, XStack, Text, H3, Button, Card, Input, Separator, Spinner, ScrollView } from "@repo/ui";
 import { adminCreateItem, adminGetItemByBarcode, adminUpdateItem, type ApiItem } from "@/components/adminApi";
 import { enqueueSyncOperation, getItemByBarcode, initDatabase, isDatabaseInitialized, saveItemToLocal } from "@/services/database";
 import { isOnline } from "@/services/sync";
@@ -41,6 +42,8 @@ export default function EditScreen() {
     const [loadingItem, setLoadingItem] = useState(false);
     const [savingItem, setSavingItem] = useState(false);
     const [lastLoadSource, setLastLoadSource] = useState<"none" | "local" | "api">("none");
+
+    const insets = useSafeAreaInsets();
 
     const goBack = () => {
         if (router.canGoBack()) {
@@ -281,7 +284,14 @@ export default function EditScreen() {
     };
 
     return (
-        <YStack flex={1} padding="$4" backgroundColor="$background" gap="$4">
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <ScrollView
+            flex={1}
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={{ padding: 16, paddingBottom: Math.max(80, insets.bottom + 80) }}
+            backgroundColor="$background"
+        >
+        <YStack gap="$4">
             <YStack gap="$2">
                 <XStack alignItems="center" gap="$3">
                     <Button size="$3" theme="gray" onPress={goBack}>
@@ -434,5 +444,7 @@ export default function EditScreen() {
                 </YStack>
             </Card>
         </YStack>
+        </ScrollView>
+        </KeyboardAvoidingView>
     );
 }

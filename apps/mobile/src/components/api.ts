@@ -248,3 +248,97 @@ export async function allocatePutaway(barcode: string, quantity: number, isXl: b
     throw error;
   }
 }
+
+/**
+ * Assign a task to a specific user (supervisor/admin only).
+ */
+export async function assignTask(taskId: number, userId: number): Promise<boolean> {
+  try {
+    const [storedToken, apiUrl] = await Promise.all([getToken(), getApiUrl()]);
+    let token = storedToken;
+    let retriedWithReauth = false;
+
+    if (!token || !apiUrl) {
+      console.warn('assignTask: missing auth token or API URL');
+      return false;
+    }
+
+    if (token === DEV_BYPASS_TOKEN) return true;
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const response = await fetch(buildApiUrl(apiUrl, `/tasks/${taskId}/assign`), {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ userId }),
+      });
+
+      if (response.ok) return true;
+
+      if ((response.status === 401 || response.status === 403) && !retriedWithReauth) {
+        const reauthResult = await reauthenticateSilently();
+        if (!reauthResult.success) { await logout(); return false; }
+        token = reauthResult.token ?? await getToken() ?? '';
+        retriedWithReauth = true;
+        continue;
+      }
+
+      const errorText = await response.text().catch(() => 'Unknown error');
+      console.error(`assignTask failed:`, response.status, errorText);
+      return false;
+    }
+    return false;
+  } catch (error) {
+    console.error('Failed to assign task:', error);
+    return false;
+  }
+}
+
+/**
+ * Update task status explicitly.
+ */
+export async function updateTaskStatus(taskId: number, status: string): Promise<boolean> {
+  try {
+    const [storedToken, apiUrl] = await Promise.all([getToken(), getApiUrl()]);
+    let token = storedToken;
+    let retriedWithReauth = false;
+
+    if (!token || !apiUrl) {
+      console.warn('updateTaskStatus: missing auth token or API URL');
+      return false;
+    }
+
+    if (token === DEV_BYPASS_TOKEN) return true;
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const response = await fetch(buildApiUrl(apiUrl, `/tasks/${taskId}/status`), {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ status }),
+      });
+
+      if (response.ok) return true;
+
+      if ((response.status === 401 || response.status === 403) && !retriedWithReauth) {
+        const reauthResult = await reauthenticateSilently();
+        if (!reauthResult.success) { await logout(); return false; }
+        token = reauthResult.token ?? await getToken() ?? '';
+        retriedWithReauth = true;
+        continue;
+      }
+
+      const errorText = await response.text().catch(() => 'Unknown error');
+      console.error(`updateTaskStatus failed:`, response.status, errorText);
+      return false;
+    }
+    return false;
+  } catch (error) {
+    console.error('Failed to update task status:', error);
+    return false;
+  }
+}

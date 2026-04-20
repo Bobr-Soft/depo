@@ -6,6 +6,7 @@ import { router } from "expo-router";
 import { adminGetUsers, adminGetTasks, type AdminUserResponse } from "@/components/adminApi";
 import { useSyncStatus } from "@/hooks";
 import type { TaskComplete } from "@/constants/types";
+import { CARD } from "@/constants";
 
 const ROLE_LABELS: Record<string, string> = {
   admin: "Admin",
@@ -123,10 +124,10 @@ export default function SupervisorWorkersScreen() {
                 <Card
                   key={user.id}
                   backgroundColor="$color2"
-                  borderRadius="$4"
-                  padding="$4"
+                  borderRadius={CARD.radius}
+                  padding={CARD.padding}
                   borderWidth={1}
-                  borderColor={!isActive(user) ? "$red5" : "$color4"}
+                  borderColor={!isActive(user) ? "$red5" : CARD.border}
                 >
                   <XStack alignItems="center" gap="$3">
                     <YStack

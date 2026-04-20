@@ -17,6 +17,7 @@ export default function PickingDetailScreen() {
   const [task, setTask] = useState<TaskComplete | null>(null);
   const [showScanner, setShowScanner] = useState(false);
   const [scannerKey, setScannerKey] = useState(0);
+  const [isSaving, setIsSaving] = useState(false);
   const isProcessing = useRef(false);
 
   const fetchTaskDetails = useCallback(async () => {
@@ -81,6 +82,7 @@ export default function PickingDetailScreen() {
           {
             text: "Kész (Teljes mennyiség)",
             onPress: async () => {
+              setIsSaving(true);
               try {
                 await taskItemPicked(matchedItem.task_id, matchedItem.item.id, matchedItem.requested_quantity);
 
@@ -101,6 +103,7 @@ export default function PickingDetailScreen() {
                   [{ text: "Újra", onPress: () => setScannerKey(prev => prev + 1), style: "default" }]
                 );
               } finally {
+                setIsSaving(false);
                 isProcessing.current = false;
               }
             },
@@ -179,6 +182,13 @@ export default function PickingDetailScreen() {
 
       <Separator borderColor="$color4" marginBottom="$2" />
 
+      {isSaving && (
+        <XStack backgroundColor="$blue5" paddingHorizontal="$4" paddingVertical="$2" alignItems="center" gap="$2">
+          <Spinner size="small" color="$blue10" />
+          <Text fontSize={13} color="$blue10" fontWeight="600">Tétel mentése...</Text>
+        </XStack>
+      )}
+
       {/* TÉTELEK LISTÁJA */}
       <ScrollView flex={1} contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
         {loading ? (
@@ -223,10 +233,10 @@ export default function PickingDetailScreen() {
                     </XStack>
 
                     <XStack gap="$2" marginTop="$2">
-                      <Button flex={1} size="$4" theme="blue" icon={Barcode} onPress={() => setShowScanner(true)}>
-                        Szkennelés
+                      <Button flex={1} size="$4" theme="blue" icon={Barcode} onPress={() => setShowScanner(true)} disabled={isSaving}>
+                        {isSaving ? 'Feldolgozás...' : 'Szkennelés'}
                       </Button>
-                      <Button size="$4" theme="red" variant="outlined" onPress={() => router.push(`/picking/${id}/edit?item_id=${activeItem.id}`)}>
+                      <Button size="$4" theme="red" variant="outlined" onPress={() => router.push(`/picking/${id}/edit?item_id=${activeItem.id}`)} disabled={isSaving}>
                         Hiány
                       </Button>
                     </XStack>

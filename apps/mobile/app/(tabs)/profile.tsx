@@ -335,6 +335,14 @@ export default function ProfileScreen() {
                 {syncStatus.isOnline ? 'Online' : `Offline (${syncStatus.pendingOperations} függő)`}
               </Text>
             </XStack>
+            {(syncStatus.pendingOperations > 0 || syncStatus.deadLetterOperations > 0) && (
+              <XStack justifyContent="space-between" alignItems="center">
+                <Text fontSize={13} color={colors.textSecondary}>Várakozó / Sikertelen</Text>
+                <Text fontSize={13} fontWeight="600" color={syncStatus.deadLetterOperations > 0 ? '$red10' : '$orange10'}>
+                  {syncStatus.pendingOperations} függő / {syncStatus.deadLetterOperations} sikertelen
+                </Text>
+              </XStack>
+            )}
             <XStack justifyContent="space-between" alignItems="center">
               <Text fontSize={13} color={colors.textSecondary}>Szinkronizálva</Text>
               <Text fontSize={13} color={colors.text}>{formattedLastSync}</Text>

@@ -1671,8 +1671,19 @@ app.get('/categories', authenticateJWT, async (req, res) => {
   try {
     if (dbConnected) {
       const capabilities = await getCategoriesSchemaCapabilities();
+
+      const selectParts = ['id', 'name', getCategoryDescriptionSelectExpr(capabilities)];
+
+      if (capabilities.hasSizeClass) {
+        selectParts.push('size_class');
+      }
+
+      if (capabilities.hasMinStockLevel) {
+        selectParts.push('min_stock_level');
+      }
+
       const [rows] = await db.query(
-        `SELECT id, name, ${getCategoryDescriptionSelectExpr(capabilities)} FROM categories`
+        `SELECT ${selectParts.join(', ')} FROM categories`
       );
       res.json(rows);
     } else {
@@ -1783,6 +1794,10 @@ app.get('/locations', authenticateJWT, async (req, res) => {
         getLocationNameSelectExpr(capabilities),
         getLocationDescriptionSelectExpr(capabilities),
       ];
+
+      if (capabilities.hasLocationCode) {
+        selectParts.push('location_code');
+      }
 
       if (capabilities.hasRowNum) {
         selectParts.push('row_num');
@@ -2429,6 +2444,141 @@ app.post('/tasks/:taskId/release', authenticateJWT, async (req, res) => {
   } catch (err) {
     await connection.rollback();
     console.error('❌ Error releasing task:', err.message);
+    return res.status(500).json({ message: 'Database error' });
+  } finally {
+    connection.release();
+  }
+});
+
+// POST Assign task to a specific user (supervisor/admin only)
+app.post('/tasks/:taskId/assign', authenticateJWT, requireSupervisorOrAdmin, async (req, res) => {
+  const parsedTaskId = Number.parseInt(req.params.taskId, 10);
+  if (!Number.isInteger(parsedTaskId) || parsedTaskId <= 0) {
+    return res.status(400).json({ message: 'Invalid taskId' });
+  }
+
+  const assignedUserId = Number.parseInt(String(req.body?.userId), 10);
+  if (!Number.isInteger(assignedUserId) || assignedUserId <= 0) {
+    return res.status(400).json({ message: 'Invalid userId' });
+  }
+
+  if (!dbConnected) {
+    return res.status(503).json({ message: 'Database not available' });
+  }
+
+  const connection = await db.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const [taskRows] = await connection.query(
+      'SELECT id, assigned_user, status FROM tasks WHERE id = ? LIMIT 1 FOR UPDATE',
+      [parsedTaskId]
+    );
+
+    if (!taskRows.length) {
+      await connection.rollback();
+      return res.status(404).json({ message: 'Task not found' });
+    }
+
+    const task = taskRows[0];
+    const currentStatus = String(task.status || '').toLowerCase();
+    if (currentStatus === 'completed' || currentStatus === 'cancelled') {
+      await connection.rollback();
+      return res.status(409).json({ message: 'Completed or cancelled tasks cannot be reassigned' });
+    }
+
+    // Verify target user exists
+    const [userRows] = await connection.query('SELECT id FROM users WHERE id = ? LIMIT 1', [assignedUserId]);
+    if (!userRows.length) {
+      await connection.rollback();
+      return res.status(404).json({ message: 'Target user not found' });
+    }
+
+    await connection.query(
+      'UPDATE tasks SET assigned_user = ?, updated_at = NOW() WHERE id = ?',
+      [assignedUserId, parsedTaskId]
+    );
+
+    await connection.commit();
+    return res.json({ message: 'Task assigned successfully', taskId: parsedTaskId, assigned_user: assignedUserId });
+  } catch (err) {
+    await connection.rollback();
+    console.error('❌ Error assigning task:', err.message);
+    return res.status(500).json({ message: 'Database error' });
+  } finally {
+    connection.release();
+  }
+});
+
+// PUT Update task status explicitly (supervisor/admin or assigned worker)
+app.put('/tasks/:taskId/status', authenticateJWT, async (req, res) => {
+  const parsedTaskId = Number.parseInt(req.params.taskId, 10);
+  if (!Number.isInteger(parsedTaskId) || parsedTaskId <= 0) {
+    return res.status(400).json({ message: 'Invalid taskId' });
+  }
+
+  const VALID_STATUSES = ['pending', 'in_progress', 'completed', 'cancelled'];
+  const VALID_TRANSITIONS = {
+    pending: ['in_progress', 'cancelled'],
+    in_progress: ['pending', 'completed', 'cancelled'],
+    completed: [],
+    cancelled: [],
+  };
+
+  const newStatus = String(req.body?.status || '').trim().toLowerCase();
+  if (!VALID_STATUSES.includes(newStatus)) {
+    return res.status(400).json({ message: `Invalid status. Must be one of: ${VALID_STATUSES.join(', ')}` });
+  }
+
+  if (!dbConnected) {
+    return res.status(503).json({ message: 'Database not available' });
+  }
+
+  const userId = resolveAuthenticatedUserId(req);
+  const userRole = String(req.user?.dbUser?.role || req.user?.role || '').toLowerCase();
+
+  const connection = await db.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const [taskRows] = await connection.query(
+      'SELECT id, assigned_user, status FROM tasks WHERE id = ? LIMIT 1 FOR UPDATE',
+      [parsedTaskId]
+    );
+
+    if (!taskRows.length) {
+      await connection.rollback();
+      return res.status(404).json({ message: 'Task not found' });
+    }
+
+    const task = taskRows[0];
+    const currentStatus = String(task.status || '').toLowerCase();
+    const isAdminOrSupervisor = userRole === 'admin' || userRole === 'supervisor';
+    const isAssignedUser = userId && Number(task.assigned_user) === userId;
+
+    if (!isAdminOrSupervisor && !isAssignedUser) {
+      await connection.rollback();
+      return res.status(403).json({ message: 'Only the assigned user, supervisor, or admin can update task status' });
+    }
+
+    const allowedTransitions = VALID_TRANSITIONS[currentStatus] || [];
+    if (!isAdminOrSupervisor && !allowedTransitions.includes(newStatus)) {
+      await connection.rollback();
+      return res.status(409).json({ message: `Cannot transition from '${currentStatus}' to '${newStatus}'` });
+    }
+
+    await connection.query(
+      'UPDATE tasks SET status = ?, updated_at = NOW() WHERE id = ?',
+      [newStatus, parsedTaskId]
+    );
+
+    await connection.commit();
+    return res.json({ message: 'Task status updated', taskId: parsedTaskId, status: newStatus, previousStatus: currentStatus });
+  } catch (err) {
+    await connection.rollback();
+    console.error('❌ Error updating task status:', err.message);
     return res.status(500).json({ message: 'Database error' });
   } finally {
     connection.release();

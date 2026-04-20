@@ -479,3 +479,217 @@ describe('POST /damage-reports', () => {
     expect(res.body).toHaveProperty('id');
   });
 });
+
+// ─── Task Assignment Endpoints ─────────────────────────────────────────────
+
+describe('POST /tasks/:taskId/take', () => {
+  test('400 for invalid taskId', async () => {
+    const res = await request(app)
+      .post('/tasks/abc/take')
+      .set('Authorization', `Bearer ${workerToken}`);
+    expect(res.status).toBe(400);
+  });
+
+  test('404 when task does not exist', async () => {
+    const connection = createMockConnection([
+      [[], []],
+    ]);
+    db.getConnection.mockResolvedValueOnce(connection);
+
+    const res = await request(app)
+      .post('/tasks/999/take')
+      .set('Authorization', `Bearer ${workerToken}`);
+    expect(res.status).toBe(404);
+  });
+
+  test('409 when task is already completed', async () => {
+    const connection = createMockConnection([
+      [[{ id: 1, assigned_user: null, status: 'completed' }], []],
+    ]);
+    db.getConnection.mockResolvedValueOnce(connection);
+
+    const res = await request(app)
+      .post('/tasks/1/take')
+      .set('Authorization', `Bearer ${workerToken}`);
+    expect(res.status).toBe(409);
+  });
+
+  test('200 assigns unassigned task to worker', async () => {
+    const connection = createMockConnection([
+      [[{ id: 1, assigned_user: null, status: 'pending' }], []],
+      [{ affectedRows: 1 }, []],
+    ]);
+    db.getConnection.mockResolvedValueOnce(connection);
+
+    const res = await request(app)
+      .post('/tasks/1/take')
+      .set('Authorization', `Bearer ${workerToken}`);
+    expect(res.status).toBe(200);
+    expect(res.body.assigned_user).toBe(1);
+  });
+});
+
+describe('POST /tasks/:taskId/release', () => {
+  test('200 releases assigned task', async () => {
+    const connection = createMockConnection([
+      [[{ id: 1, assigned_user: 1, status: 'in_progress' }], []],
+      [{ affectedRows: 1 }, []],
+    ]);
+    db.getConnection.mockResolvedValueOnce(connection);
+
+    const res = await request(app)
+      .post('/tasks/1/release')
+      .set('Authorization', `Bearer ${workerToken}`);
+    expect(res.status).toBe(200);
+    expect(res.body.assigned_user).toBeNull();
+  });
+
+  test('409 when task is already unassigned', async () => {
+    const connection = createMockConnection([
+      [[{ id: 1, assigned_user: null, status: 'pending' }], []],
+    ]);
+    db.getConnection.mockResolvedValueOnce(connection);
+
+    const res = await request(app)
+      .post('/tasks/1/release')
+      .set('Authorization', `Bearer ${workerToken}`);
+    expect(res.status).toBe(409);
+  });
+});
+
+describe('POST /tasks/:taskId/assign', () => {
+  test('403 for non-supervisor/admin user', async () => {
+    const res = await request(app)
+      .post('/tasks/1/assign')
+      .set('Authorization', `Bearer ${workerToken}`)
+      .send({ userId: 2 });
+    expect(res.status).toBe(403);
+  });
+
+  test('400 with missing userId', async () => {
+    const res = await request(app)
+      .post('/tasks/1/assign')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({});
+    expect(res.status).toBe(400);
+  });
+
+  test('200 assigns task to specified user', async () => {
+    db.query.mockResolvedValueOnce([[{ id: 1, email: 'test@example.com', role: 'Admin' }], []]);
+
+    const connection = createMockConnection([
+      [[{ id: 5, assigned_user: null, status: 'pending' }], []],
+      [[{ id: 2 }], []],
+      [{ affectedRows: 1 }, []],
+    ]);
+    db.getConnection.mockResolvedValueOnce(connection);
+
+    const res = await request(app)
+      .post('/tasks/5/assign')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ userId: 2 });
+    expect(res.status).toBe(200);
+    expect(res.body.assigned_user).toBe(2);
+  });
+
+  test('404 when target user does not exist', async () => {
+    db.query.mockResolvedValueOnce([[{ id: 1, email: 'test@example.com', role: 'Admin' }], []]);
+
+    const connection = createMockConnection([
+      [[{ id: 5, assigned_user: null, status: 'pending' }], []],
+      [[], []],
+    ]);
+    db.getConnection.mockResolvedValueOnce(connection);
+
+    const res = await request(app)
+      .post('/tasks/5/assign')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ userId: 999 });
+    expect(res.status).toBe(404);
+  });
+});
+
+describe('PUT /tasks/:taskId/status', () => {
+  test('400 for invalid status value', async () => {
+    const res = await request(app)
+      .put('/tasks/1/status')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ status: 'invalid' });
+    expect(res.status).toBe(400);
+  });
+
+  test('200 updates status for admin', async () => {
+    db.query.mockResolvedValueOnce([[{ id: 1, email: 'test@example.com', role: 'Admin' }], []]);
+
+    const connection = createMockConnection([
+      [[{ id: 1, assigned_user: 1, status: 'pending' }], []],
+      [{ affectedRows: 1 }, []],
+    ]);
+    db.getConnection.mockResolvedValueOnce(connection);
+
+    const res = await request(app)
+      .put('/tasks/1/status')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ status: 'in_progress' });
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('in_progress');
+    expect(res.body.previousStatus).toBe('pending');
+  });
+
+  test('403 for unrelated worker', async () => {
+    const unrelatedToken = makeToken({ userId: '99', role: 'Worker' });
+
+    const connection = createMockConnection([
+      [[{ id: 1, assigned_user: 2, status: 'pending' }], []],
+    ]);
+    db.getConnection.mockResolvedValueOnce(connection);
+
+    const res = await request(app)
+      .put('/tasks/1/status')
+      .set('Authorization', `Bearer ${unrelatedToken}`)
+      .send({ status: 'in_progress' });
+    expect(res.status).toBe(403);
+  });
+});
+
+describe('PUT /tasks/:taskId/items/:itemId/picked', () => {
+  test('400 for invalid pickedQuantity', async () => {
+    const res = await request(app)
+      .put('/tasks/1/items/1/picked')
+      .set('Authorization', `Bearer ${workerToken}`)
+      .send({ pickedQuantity: -1 });
+    expect(res.status).toBe(400);
+  });
+
+  test('404 when task item does not exist', async () => {
+    const connection = createMockConnection([
+      [[], []],
+    ]);
+    db.getConnection.mockResolvedValueOnce(connection);
+
+    const res = await request(app)
+      .put('/tasks/1/items/999/picked')
+      .set('Authorization', `Bearer ${workerToken}`)
+      .send({ pickedQuantity: 5 });
+    expect(res.status).toBe(404);
+  });
+
+  test('200 updates picked quantity and completes task when all items picked', async () => {
+    const connection = createMockConnection([
+      [[{ id: 10, requested_quantity: 5, picked_quantity: 0, assigned_user: 1, assigned_email: 'test@example.com' }], []],
+      [{ affectedRows: 1 }, []],
+      [{ affectedRows: 1 }, []],
+      [[{ totalItems: 1, pickedItems: 1 }], []],
+      [{ affectedRows: 1 }, []],
+    ]);
+    db.getConnection.mockResolvedValueOnce(connection);
+
+    const res = await request(app)
+      .put('/tasks/1/items/100/picked')
+      .set('Authorization', `Bearer ${workerToken}`)
+      .send({ pickedQuantity: 5 });
+    expect(res.status).toBe(200);
+    expect(res.body.itemStatus).toBe('picked');
+    expect(res.body.taskStatus).toBe('completed');
+  });
+});
