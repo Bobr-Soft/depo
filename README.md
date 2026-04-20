@@ -9,7 +9,7 @@ A full-stack inventory management system built as a Turborepo monorepo. A **REST
 ## Architecture
 
 ```
-┌──────────┐      ┌──────────┐
+┌───────────┐      ┌──────────┐
 │  Mobile   │      │   Web    │
 │ (Expo RN) │      │ (React)  │
 └────┬──────┘      └────┬─────┘
