@@ -89,7 +89,8 @@ export async function initDatabase(): Promise<void> {
         entity_id INTEGER,
         payload TEXT NOT NULL,
         created_at INTEGER NOT NULL,
-        retry_count INTEGER DEFAULT 0
+        retry_count INTEGER DEFAULT 0,
+        idempotency_key TEXT
       );
 
       -- Tasks table
@@ -186,6 +187,7 @@ export async function initDatabase(): Promise<void> {
       await db.runAsync('ALTER TABLE tasks ADD COLUMN assigned_user_role TEXT').catch(() => undefined);
       await db.runAsync('ALTER TABLE tasks ADD COLUMN assigned_user_is_active INTEGER').catch(() => undefined);
       await db.runAsync('ALTER TABLE tasks ADD COLUMN assigned_user_last_login INTEGER').catch(() => undefined);
+      await db.runAsync('ALTER TABLE sync_queue ADD COLUMN idempotency_key TEXT').catch(() => undefined);
 
     isInitialized = true;
     console.log('Database initialized successfully');
@@ -264,11 +266,21 @@ export async function saveTasks(tasks: TaskComplete[]): Promise<void> {
       for (const task of tasks) {
         const taskStatus = resolveTaskStatusForLocalStore(task);
 
+        // Check if this task has unsynced local modifications (e.g. locally computed 'completed').
+        // If so, preserve the local status so the pull phase doesn't overwrite it.
+        const existingTask = await database.getFirstAsync<{ status: string; synced: number }>(
+          'SELECT status, synced FROM tasks WHERE id = ?',
+          [task.id]
+        );
+        const preserveLocalStatus = existingTask && existingTask.synced === 0;
+        const finalStatus = preserveLocalStatus ? existingTask.status : taskStatus;
+        const finalSynced = preserveLocalStatus ? 0 : 1;
+
         // Insert or replace task
         await database.runAsync(
           `INSERT OR REPLACE INTO tasks
            (id, name, type, source_id, assigned_user, assigned_user_email, assigned_user_role, assigned_user_is_active, assigned_user_last_login, status, priority, deadline, updated_at, created_at, synced)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             task.id,
             task.name,
@@ -279,27 +291,35 @@ export async function saveTasks(tasks: TaskComplete[]): Promise<void> {
             task.assigned_user_data?.role ?? null,
             task.assigned_user_data == null ? null : task.assigned_user_data.is_active ? 1 : 0,
             toEpoch(task.assigned_user_data?.last_login),
-            taskStatus,
+            finalStatus,
             task.priority,
             toEpoch(task.deadline),
             toEpoch(task.updated_at),
             toEpoch(task.created_at),
+            finalSynced,
           ]
         );
 
-        // Save task items
+        // Save task items — also preserve local picked state if unsynced
         for (const taskItem of task.items) {
+          const existingItem = await database.getFirstAsync<{ picked_quantity: number; status: string; synced: number }>(
+            'SELECT picked_quantity, status, synced FROM task_items WHERE id = ?',
+            [taskItem.id]
+          );
+          const preserveLocalItem = existingItem && existingItem.synced === 0;
+
           await database.runAsync(
             `INSERT OR REPLACE INTO task_items
              (id, task_id, item_id, requested_quantity, picked_quantity, status, synced)
-             VALUES (?, ?, ?, ?, ?, ?, 1)`,
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
             [
               taskItem.id,
               taskItem.task_id,
               taskItem.item.id,
               taskItem.requested_quantity,
-              taskItem.picked_quantity,
-              taskItem.status,
+              preserveLocalItem ? existingItem.picked_quantity : taskItem.picked_quantity,
+              preserveLocalItem ? existingItem.status : taskItem.status,
+              preserveLocalItem ? 0 : 1,
             ]
           );
 
@@ -567,6 +587,21 @@ async function recomputeAndPersistTaskStatus(
     [nextTaskStatus, updatedAt, taskId]
   );
 
+  // When task transitions to completed, queue a sync operation to push it to the server
+  if (nextTaskStatus === 'completed') {
+    await database.runAsync(
+      `INSERT INTO sync_queue (operation, entity_type, entity_id, payload, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      [
+        'UPDATE',
+        'task',
+        taskId,
+        JSON.stringify({ status: 'completed' }),
+        updatedAt,
+      ]
+    );
+  }
+
   return nextTaskStatus;
 }
 
@@ -740,15 +775,16 @@ export async function enqueueSyncOperation(
   operation: string,
   entityType: string,
   entityId: number | null,
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
+  idempotencyKey?: string
 ): Promise<void> {
   const database = getDb();
 
   try {
     await database.runAsync(
-      `INSERT INTO sync_queue (operation, entity_type, entity_id, payload, created_at)
-       VALUES (?, ?, ?, ?, ?)`,
-      [operation, entityType, entityId, JSON.stringify(payload), Date.now()]
+      `INSERT INTO sync_queue (operation, entity_type, entity_id, payload, created_at, idempotency_key)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [operation, entityType, entityId, JSON.stringify(payload), Date.now(), idempotencyKey ?? null]
     );
   } catch (error) {
     console.error('Failed to enqueue sync operation:', error);
@@ -876,6 +912,102 @@ export async function setLastSyncTime(timestamp: number): Promise<void> {
     );
   } catch (error) {
     console.error('Failed to set last sync time:', error);
+  }
+}
+
+// ============================================================
+// INBOUND DRAFT PERSISTENCE
+// ============================================================
+
+/**
+ * Save inbound draft items to persistent storage (sync_metadata key-value).
+ * Survives app kills/restarts.
+ */
+export async function saveInboundDraft(items: unknown[]): Promise<void> {
+  const database = getDb();
+
+  try {
+    const payload = JSON.stringify(items);
+    await database.runAsync(
+      `INSERT OR REPLACE INTO sync_metadata (key, value, updated_at)
+       VALUES ('inbound_draft', ?, ?)`,
+      [payload, Date.now()]
+    );
+  } catch (error) {
+    console.error('Failed to save inbound draft:', error);
+  }
+}
+
+/**
+ * Load persisted inbound draft items. Returns empty array if nothing saved.
+ */
+export async function loadInboundDraft(): Promise<unknown[]> {
+  const database = getDb();
+
+  try {
+    const result = await database.getFirstAsync<{ value: string }>(
+      "SELECT value FROM sync_metadata WHERE key = 'inbound_draft'"
+    );
+    if (!result?.value) return [];
+    const parsed = JSON.parse(result.value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    console.error('Failed to load inbound draft:', error);
+    return [];
+  }
+}
+
+/**
+ * Clear persisted inbound draft.
+ */
+export async function clearInboundDraft(): Promise<void> {
+  const database = getDb();
+
+  try {
+    await database.runAsync("DELETE FROM sync_metadata WHERE key = 'inbound_draft'");
+  } catch (error) {
+    console.error('Failed to clear inbound draft:', error);
+  }
+}
+
+// ============================================================
+// DEAD-LETTER QUEUE DETAILS
+// ============================================================
+
+/**
+ * Get dead-letter queue entries with details for diagnostics UI.
+ */
+export async function getDeadLetterEntries(): Promise<Array<{
+  id: number;
+  operation: string;
+  entity_type: string;
+  failure_reason: string;
+  failure_details: string;
+  moved_to_dead_letter_at: number;
+  final_retry_count: number;
+}>> {
+  const database = getDb();
+
+  try {
+    return await database.getAllAsync(
+      'SELECT id, operation, entity_type, failure_reason, failure_details, moved_to_dead_letter_at, final_retry_count FROM dead_letter_queue ORDER BY moved_to_dead_letter_at DESC LIMIT 50'
+    );
+  } catch (error) {
+    console.error('Failed to get dead-letter entries:', error);
+    return [];
+  }
+}
+
+/**
+ * Clear all dead-letter entries (after user acknowledges).
+ */
+export async function clearDeadLetterQueue(): Promise<void> {
+  const database = getDb();
+
+  try {
+    await database.runAsync('DELETE FROM dead_letter_queue');
+  } catch (error) {
+    console.error('Failed to clear dead-letter queue:', error);
   }
 }
 

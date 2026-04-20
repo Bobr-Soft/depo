@@ -1,12 +1,13 @@
 import React, { useState, useCallback, useRef, useEffect } from "react";
 import { Alert } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { YStack, XStack, Button, Text, H2, Card, ScrollView, Separator, Switch } from "@repo/ui";
-import { ScanBarcode, Package, ArrowLeft, RefreshCw, Trash2, Edit3, Save, CheckCircle2, AlertCircle, MapPin } from "@tamagui/lucide-icons";
+import { ScanBarcode, Package, ArrowLeft, RefreshCw, Trash2, Edit3, Save, CheckCircle2, AlertCircle, MapPin, RotateCcw } from "@tamagui/lucide-icons";
 import { BarcodeScanner } from "@/components";
 import { router, useLocalSearchParams } from "expo-router";
-import { buildApiUrl, getApiUrl, getToken } from "@/services/secureStorage";
+import { buildApiUrl, getApiUrl, getToken, getScanSoundEnabled, getHapticFeedbackEnabled } from "@/services/secureStorage";
 import { isOnline, syncData } from "@/services/sync";
-import { enqueueSyncOperation, getSyncQueue, initDatabase, isDatabaseInitialized } from "@/services/database";
+import { enqueueSyncOperation, getSyncQueue, initDatabase, isDatabaseInitialized, saveInboundDraft, loadInboundDraft, clearInboundDraft } from "@/services/database";
 
 type ScannedInboundItem = {
   code: string;
@@ -31,9 +32,9 @@ type ApiItem = {
 };
 
 const normalizeBarcode = (value: string) => value.trim().replace(/\s+/g, "").toLowerCase();
-let inboundDraftCache: ScannedInboundItem[] = [];
 
 export default function InboundScreen() {
+  const insets = useSafeAreaInsets();
   const { action, code: editedCode, quantity: editedQuantity, nonce } = useLocalSearchParams<{
     action?: string | string[];
     code?: string | string[];
@@ -43,14 +44,19 @@ export default function InboundScreen() {
 
   const [showScanner, setShowScanner] = useState(false);
   const [scannerKey, setScannerKey] = useState(0);
-  const [scannedItems, setScannedItems] = useState<ScannedInboundItem[]>(() => [...inboundDraftCache]);
+  const [scannedItems, setScannedItems] = useState<ScannedInboundItem[]>([]);
   const [isSaving, setIsSaving] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
   const [pendingRetryCount, setPendingRetryCount] = useState(0);
   const [summary, setSummary] = useState<SaveSummary | null>(null);
+  const [draftRecovered, setDraftRecovered] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [hapticEnabled, setHapticEnabled] = useState(true);
 
   const isProcessing = useRef(false);
   const lastHandledEditNonce = useRef<string | null>(null);
+  const draftSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hasMounted = useRef(false);
 
   const getSingleParam = (value: string | string[] | undefined): string | undefined => Array.isArray(value) ? value[0] : value;
 
@@ -67,7 +73,51 @@ export default function InboundScreen() {
   }, []);
 
   useEffect(() => { loadPendingRetryCount(); }, [loadPendingRetryCount]);
-  useEffect(() => { inboundDraftCache = scannedItems; }, [scannedItems]);
+
+  useEffect(() => {
+    Promise.all([getScanSoundEnabled(), getHapticFeedbackEnabled()]).then(([s, h]) => {
+      setSoundEnabled(s);
+      setHapticEnabled(h);
+    });
+  }, []);
+
+  // Load persisted draft on mount
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        if (!isDatabaseInitialized()) await initDatabase();
+        const draft = await loadInboundDraft();
+        if (active && draft.length > 0) {
+          const recovered = (draft as ScannedInboundItem[]).map(item => ({
+            ...item,
+            timestamp: new Date(item.timestamp),
+          }));
+          setScannedItems(recovered);
+          setDraftRecovered(true);
+        }
+      } catch (error) {
+        console.error('Failed to load inbound draft:', error);
+      } finally {
+        if (active) hasMounted.current = true;
+      }
+    })();
+    return () => { active = false; };
+  }, []);
+
+  // Persist draft on every change (debounced 500ms)
+  useEffect(() => {
+    if (!hasMounted.current) return;
+    if (draftSaveTimer.current) clearTimeout(draftSaveTimer.current);
+    draftSaveTimer.current = setTimeout(() => {
+      if (scannedItems.length > 0) {
+        saveInboundDraft(scannedItems).catch(err => console.error('Draft save failed:', err));
+      } else {
+        clearInboundDraft().catch(err => console.error('Draft clear failed:', err));
+      }
+    }, 500);
+    return () => { if (draftSaveTimer.current) clearTimeout(draftSaveTimer.current); };
+  }, [scannedItems]);
 
   useEffect(() => {
     const actionValue = getSingleParam(action);
@@ -150,13 +200,14 @@ export default function InboundScreen() {
 
   const enqueueInboundRetry = useCallback(async (item: ScannedInboundItem) => {
     if (!isDatabaseInitialized()) await initDatabase();
+    const idempotencyKey = `inbound-${normalizeBarcode(item.code)}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     await enqueueSyncOperation("UPSERT", "item", null, {
       barcode: item.code,
       quantityIncrement: item.quantity,
       name: `Beolvasott termék ${item.code}`,
       description: "Inbound scan",
-      isXl: item.isXl // Átadjuk az XL flaget is az offline sornak
-    });
+      isXl: item.isXl
+    }, idempotencyKey);
   }, []);
 
   const allocateAndSaveItems = useCallback(async () => {
@@ -178,9 +229,12 @@ export default function InboundScreen() {
           batchSummary.queued += 1;
         }
         setScannedItems([]);
+        await clearInboundDraft();
         setSummary(batchSummary);
         await loadPendingRetryCount();
-        Alert.alert("Offline mentés", "Nincs internetkapcsolat. A tételek a várólistára kerültek. Amint online leszel, a rendszer megkísérli lefoglalni a lokációkat.");
+        Alert.alert("Offline mentés", "Nincs internetkapcsolat. A tételek a várólistára kerültek. Amint online leszel, a rendszer megkísérli lefoglalni a lokációkat.",
+          [{ text: "Rendben", onPress: () => router.replace('/(tabs)') }]
+        );
         return;
       }
 
@@ -242,12 +296,13 @@ export default function InboundScreen() {
         setScannedItems(updatedItemsList);
         Alert.alert("Részleges mentés", `Sikeres kiosztás: ${batchSummary.successful}\nSikertelen (pl. tele a raktár): ${batchSummary.failed}\nVárólistára tett: ${batchSummary.queued}`);
       } else {
-        // Ha minden sikeres, frissítjük a UI-t, hogy lássa a lokációkat, de a "Mentés" gomb eltűnik (vagy lecserélődik)
-        setScannedItems(updatedItemsList);
+        // Ha minden sikeres, töröljük a listát és navigálunk a főoldalra
+        setScannedItems([]);
+        await clearInboundDraft();
         Alert.alert(
           "Lokációk lefoglalva",
           `${batchSummary.successful} tételhez sikeresen kijelöltük a cél polcokat. Kérjük, vidd a tételeket a kijelölt helyekre.`,
-          [{ text: "Megértettem", style: "default" }]
+          [{ text: "Megértettem", onPress: () => router.replace('/(tabs)') }]
         );
       }
     } catch (error) {
@@ -258,6 +313,7 @@ export default function InboundScreen() {
       }
       batchSummary.failed = scannedItems.length;
       setScannedItems([]);
+      await clearInboundDraft();
       setSummary(batchSummary);
       await loadPendingRetryCount();
       Alert.alert("Mentési hiba", "A hálózati kérés megszakadt, a tételek várólistára kerültek újrapróbáláshoz.");
@@ -288,7 +344,7 @@ export default function InboundScreen() {
       `Biztosan törlöd a listát? (${scannedItems.length} db)`,
       [
         { text: "Mégse", style: "cancel" },
-        { text: "Törlés", style: "destructive", onPress: () => { setScannedItems([]); setSummary(null); } },
+        { text: "Törlés", style: "destructive", onPress: () => { setScannedItems([]); setSummary(null); clearInboundDraft().catch(() => {}); } },
       ]
     );
   }, [scannedItems.length]);
@@ -302,6 +358,8 @@ export default function InboundScreen() {
         title="Termék bevételezés"
         instruction="Szkenneld be az érkező áru vonalkódját"
         autoResetDelay={0}
+        enableSound={soundEnabled}
+        enableHaptics={hapticEnabled}
       />
     );
   }
@@ -330,6 +388,20 @@ export default function InboundScreen() {
 
       {/* DYNAMIC ALERTS / STATUSES */}
       <YStack paddingHorizontal="$4" gap="$2" marginBottom="$2">
+        {draftRecovered && scannedItems.length > 0 && (
+          <Card backgroundColor="$blue2" padding="$3" borderRadius="$4" borderWidth={1} borderColor="$blue5">
+            <XStack justifyContent="space-between" alignItems="center">
+              <YStack flex={1}>
+                <Text fontSize={13} fontWeight="600" color="$blue10">Visszaállított piszkozat</Text>
+                <Text fontSize={12} color="$blue10">{scannedItems.length} tétel visszatöltve az előző munkamenetből.</Text>
+              </YStack>
+              <Button size="$3" theme="blue" onPress={() => setDraftRecovered(false)}>
+                <RotateCcw size={16} />
+              </Button>
+            </XStack>
+          </Card>
+        )}
+
         {pendingRetryCount > 0 && (
           <Card backgroundColor="$orange2" padding="$3" borderRadius="$4" borderWidth={1} borderColor="$orange5">
             <XStack justifyContent="space-between" alignItems="center">
@@ -362,7 +434,7 @@ export default function InboundScreen() {
       <Separator borderColor="$color4" marginBottom="$2" />
 
       {/* SCANNED ITEMS LIST */}
-      <ScrollView flex={1} contentContainerStyle={{ padding: 16, paddingBottom: 100 }} onScroll={() => { if (pendingRetryCount > 0) loadPendingRetryCount(); }}>
+      <ScrollView flex={1} contentContainerStyle={{ padding: 16, paddingBottom: Math.max(100, insets.bottom + 80) }} onScroll={() => { if (pendingRetryCount > 0) loadPendingRetryCount(); }}>
 
         {scannedItems.length > 0 ? (
           <YStack gap="$3">

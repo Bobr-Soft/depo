@@ -9921,6 +9921,7 @@ __metadata:
     eslint-import-resolver-typescript: "npm:^4.4.4"
     expo: "npm:~54.0.32"
     expo-auth-session: "npm:~7.0.8"
+    expo-av: "npm:~16.0.8"
     expo-camera: "npm:^17.0.10"
     expo-constants: "npm:~18.0.13"
     expo-dev-client: "npm:^6.0.20"
@@ -11295,6 +11296,21 @@ __metadata:
     react: "*"
     react-native: "*"
   checksum: 10c0/c29cd639eb9be3b408b3f6beffbb82e008a0ad1933be4f76155922fe73fc8ef618f015154b36193b0c2c0a05c488dcc0a5cc9a02121b8bf4bcb927e68cc105d0
+  languageName: node
+  linkType: hard
+
+"expo-av@npm:~16.0.8":
+  version: 16.0.8
+  resolution: "expo-av@npm:16.0.8"
+  peerDependencies:
+    expo: "*"
+    react: "*"
+    react-native: "*"
+    react-native-web: "*"
+  peerDependenciesMeta:
+    react-native-web:
+      optional: true
+  checksum: 10c0/2f40b8fcc7824d4f3e0078e6dff25ccb5b12b21abfcf6de30f4ea831716c6be18f9b59ab085e7b88ece5b0d314f998798e864f4b4a3c0f493c66060f4fc94955
   languageName: node
   linkType: hard
 

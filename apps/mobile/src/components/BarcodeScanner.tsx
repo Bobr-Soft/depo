@@ -4,6 +4,10 @@ import { CameraView, useCameraPermissions, BarcodeScanningResult } from "expo-ca
 import { YStack, XStack, Button, Text, H2 } from "@repo/ui";
 import { X, Flashlight, FlashlightOff, Camera, CheckCircle2 } from "@tamagui/lucide-icons";
 import * as Haptics from "expo-haptics";
+import { Audio } from "expo-av";
+
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const beepAsset = require("../../assets/sounds/beep.wav");
 
 const { width } = Dimensions.get("window");
 const SCAN_AREA_SIZE = width * 0.7;
@@ -17,6 +21,7 @@ export interface BarcodeScannerProps {
   showCloseButton?: boolean;
   enableFlashlight?: boolean;
   enableHaptics?: boolean;
+  enableSound?: boolean;
   barcodeTypes?: (
     | "qr" | "ean13" | "ean8" | "code128" | "code39" | "code93"
     | "codabar" | "upc_a" | "upc_e" | "itf14" | "pdf417" | "aztec" | "datamatrix"
@@ -32,6 +37,7 @@ export function BarcodeScanner({
   showCloseButton = true,
   enableFlashlight = true,
   enableHaptics = true,
+  enableSound = true,
   barcodeTypes = [
     "qr", "ean13", "ean8", "code128", "code39", "code93",
     "codabar", "upc_a", "upc_e", "itf14", "pdf417", "aztec", "datamatrix",
@@ -44,10 +50,26 @@ export function BarcodeScanner({
   const scanLock = useRef(false);
   const onScanRef = useRef(onScan);
   const lastScanRef = useRef<{ data: string; timestamp: number } | null>(null);
+  const soundRef = useRef<Audio.Sound | null>(null);
 
   useEffect(() => {
     onScanRef.current = onScan;
   }, [onScan]);
+
+  // Preload beep sound
+  useEffect(() => {
+    let mounted = true;
+    if (enableSound) {
+      Audio.Sound.createAsync(beepAsset, { shouldPlay: false }).then(({ sound }) => {
+        if (mounted) soundRef.current = sound;
+      }).catch(() => {});
+    }
+    return () => {
+      mounted = false;
+      soundRef.current?.unloadAsync().catch(() => {});
+      soundRef.current = null;
+    };
+  }, [enableSound]);
 
   const scannerSettings = useMemo(() => ({ barcodeTypes }), [barcodeTypes]);
 
@@ -83,8 +105,12 @@ export function BarcodeScanner({
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     }
 
+    if (enableSound && soundRef.current) {
+      soundRef.current.replayAsync().catch(() => {});
+    }
+
     onScanRef.current(normalizedData, type);
-  }, [enableHaptics]);
+  }, [enableHaptics, enableSound]);
 
   const resetScanner = useCallback(() => {
     setScanned(false);

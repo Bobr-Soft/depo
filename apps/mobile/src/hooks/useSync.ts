@@ -8,6 +8,8 @@ export interface SyncStatus {
   isOnline: boolean;
   lastSyncTime: number | null;
   pendingOperations: number;
+  deadLetterOperations: number;
+  lastFailureReason: string | null;
 }
 
 /**
@@ -19,6 +21,8 @@ export function useSyncStatus() {
     isOnline: false,
     lastSyncTime: null,
     pendingOperations: 0,
+    deadLetterOperations: 0,
+    lastFailureReason: null,
   });
 
   const updateStatus = async () => {
@@ -115,7 +119,7 @@ export function useAutoSync() {
 
           console.log('Network reconnected, triggering sync...');
           lastTriggerAtRef.current = Date.now();
-          return syncData();
+          return syncData({ trigger: 'reconnect' });
         })
         .catch((error) => {
           console.error('Auto-sync on reconnection failed:', error);

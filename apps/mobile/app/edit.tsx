@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert } from "react-native";
+import { Alert, KeyboardAvoidingView, Platform } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { router, useLocalSearchParams } from "expo-router";
-import { YStack, XStack, Text, H3, Button, Card, Input, Separator, Spinner } from "@repo/ui";
-import { adminCreateItem, adminGetItemByBarcode, adminUpdateItem, type ApiItem } from "@/components/adminApi";
+import { YStack, XStack, Text, H3, Button, Card, Input, Separator, Spinner, ScrollView } from "@repo/ui";
+import { adminCreateItem, adminGetItemByBarcode, adminUpdateItem, adminGetCategories, adminGetLocations, type ApiItem } from "@/components/adminApi";
 import { enqueueSyncOperation, getItemByBarcode, initDatabase, isDatabaseInitialized, saveItemToLocal } from "@/services/database";
 import { isOnline } from "@/services/sync";
 
@@ -41,6 +42,14 @@ export default function EditScreen() {
     const [loadingItem, setLoadingItem] = useState(false);
     const [savingItem, setSavingItem] = useState(false);
     const [lastLoadSource, setLastLoadSource] = useState<"none" | "local" | "api">("none");
+    const [categories, setCategories] = useState<{ id: number; name: string }[]>([]);
+    const [locations, setLocations] = useState<{ id: number; location_code: string }[]>([]);
+    const [showCategoryPicker, setShowCategoryPicker] = useState(false);
+    const [showLocationPicker, setShowLocationPicker] = useState(false);
+    const [categorySearch, setCategorySearch] = useState("");
+    const [locationSearch, setLocationSearch] = useState("");
+
+    const insets = useSafeAreaInsets();
 
     const goBack = () => {
         if (router.canGoBack()) {
@@ -159,6 +168,19 @@ export default function EditScreen() {
             console.error("Failed to auto-load item:", error);
         });
     }, [code, loadItemByBarcode]);
+
+    useEffect(() => {
+        (async () => {
+            try {
+                const cats = await adminGetCategories();
+                setCategories(cats.map((c) => ({ id: c.id, name: c.name })));
+            } catch { /* offline - pickers will be empty */ }
+            try {
+                const locs = await adminGetLocations();
+                setLocations(locs.map((l) => ({ id: l.id, location_code: l.location_code })));
+            } catch { /* offline */ }
+        })();
+    }, []);
 
     const saveItem = async () => {
         const trimmedBarcode = barcodeInput.trim();
@@ -281,7 +303,14 @@ export default function EditScreen() {
     };
 
     return (
-        <YStack flex={1} padding="$4" backgroundColor="$background" gap="$4">
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <ScrollView
+            flex={1}
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={{ padding: 16, paddingBottom: Math.max(80, insets.bottom + 80) }}
+            backgroundColor="$background"
+        >
+        <YStack gap="$4">
             <YStack gap="$2">
                 <XStack alignItems="center" gap="$3">
                     <Button size="$3" theme="gray" onPress={goBack}>
@@ -393,26 +422,106 @@ export default function EditScreen() {
                     <XStack gap="$2">
                         <YStack gap="$2" flex={1}>
                             <Text color="$color11" fontSize={12} textTransform="uppercase" fontWeight="600">
-                                Kategória ID
+                                Kategória
                             </Text>
-                            <Input
-                                value={categoryIdInput}
-                                onChangeText={(text: string) => setCategoryIdInput(text.replace(/[^0-9]/g, ""))}
-                                keyboardType="numeric"
+                            <Button
                                 size="$4"
-                            />
+                                theme="gray"
+                                onPress={() => { setShowCategoryPicker(!showCategoryPicker); setShowLocationPicker(false); }}
+                            >
+                                <Text numberOfLines={1}>
+                                    {categoryIdInput
+                                        ? `#${categoryIdInput} ${categories.find((c) => String(c.id) === categoryIdInput)?.name ?? ""}`
+                                        : "Válassz..."}
+                                </Text>
+                            </Button>
+                            {showCategoryPicker && (
+                                <YStack backgroundColor="$color2" borderWidth={1} borderColor="$color5" borderRadius="$3" maxHeight={160} overflow="hidden">
+                                    <Input
+                                        size="$3"
+                                        placeholder="Keresés..."
+                                        value={categorySearch}
+                                        onChangeText={setCategorySearch}
+                                    />
+                                    <ScrollView nestedScrollEnabled>
+                                        {categories.length === 0 ? (
+                                            <Text padding="$2" fontSize={12} color="$color9">Nincs elérhető kategória</Text>
+                                        ) : categories.filter((c) => !categorySearch || c.name.toLowerCase().includes(categorySearch.toLowerCase()) || String(c.id).includes(categorySearch)).map((cat) => (
+                                            <Button
+                                                key={cat.id}
+                                                size="$3"
+                                                backgroundColor={String(cat.id) === categoryIdInput ? "$blue5" : "transparent"}
+                                                justifyContent="flex-start"
+                                                borderRadius={0}
+                                                onPress={() => { setCategoryIdInput(String(cat.id)); setShowCategoryPicker(false); setCategorySearch(""); }}
+                                            >
+                                                <Text fontSize={13} color="$color11">#{cat.id} — {cat.name}</Text>
+                                            </Button>
+                                        ))}
+                                        <Button
+                                            size="$3"
+                                            backgroundColor="transparent"
+                                            justifyContent="flex-start"
+                                            borderRadius={0}
+                                            onPress={() => { setCategoryIdInput(""); setShowCategoryPicker(false); setCategorySearch(""); }}
+                                        >
+                                            <Text fontSize={13} color="$color9">— Nincs —</Text>
+                                        </Button>
+                                    </ScrollView>
+                                </YStack>
+                            )}
                         </YStack>
 
                         <YStack gap="$2" flex={1}>
                             <Text color="$color11" fontSize={12} textTransform="uppercase" fontWeight="600">
-                                Lokáció ID
+                                Lokáció
                             </Text>
-                            <Input
-                                value={locationIdInput}
-                                onChangeText={(text: string) => setLocationIdInput(text.replace(/[^0-9]/g, ""))}
-                                keyboardType="numeric"
+                            <Button
                                 size="$4"
-                            />
+                                theme="gray"
+                                onPress={() => { setShowLocationPicker(!showLocationPicker); setShowCategoryPicker(false); }}
+                            >
+                                <Text numberOfLines={1}>
+                                    {locationIdInput
+                                        ? `#${locationIdInput} ${locations.find((l) => String(l.id) === locationIdInput)?.location_code ?? ""}`
+                                        : "Válassz..."}
+                                </Text>
+                            </Button>
+                            {showLocationPicker && (
+                                <YStack backgroundColor="$color2" borderWidth={1} borderColor="$color5" borderRadius="$3" maxHeight={160} overflow="hidden">
+                                    <Input
+                                        size="$3"
+                                        placeholder="Keresés..."
+                                        value={locationSearch}
+                                        onChangeText={setLocationSearch}
+                                    />
+                                    <ScrollView nestedScrollEnabled>
+                                        {locations.length === 0 ? (
+                                            <Text padding="$2" fontSize={12} color="$color9">Nincs elérhető lokáció</Text>
+                                        ) : locations.filter((l) => !locationSearch || l.location_code.toLowerCase().includes(locationSearch.toLowerCase()) || String(l.id).includes(locationSearch)).map((loc) => (
+                                            <Button
+                                                key={loc.id}
+                                                size="$3"
+                                                backgroundColor={String(loc.id) === locationIdInput ? "$blue5" : "transparent"}
+                                                justifyContent="flex-start"
+                                                borderRadius={0}
+                                                onPress={() => { setLocationIdInput(String(loc.id)); setShowLocationPicker(false); setLocationSearch(""); }}
+                                            >
+                                                <Text fontSize={13} color="$color11">#{loc.id} — {loc.location_code}</Text>
+                                            </Button>
+                                        ))}
+                                        <Button
+                                            size="$3"
+                                            backgroundColor="transparent"
+                                            justifyContent="flex-start"
+                                            borderRadius={0}
+                                            onPress={() => { setLocationIdInput(""); setShowLocationPicker(false); setLocationSearch(""); }}
+                                        >
+                                            <Text fontSize={13} color="$color9">— Nincs —</Text>
+                                        </Button>
+                                    </ScrollView>
+                                </YStack>
+                            )}
                         </YStack>
                     </XStack>
 
@@ -434,5 +543,7 @@ export default function EditScreen() {
                 </YStack>
             </Card>
         </YStack>
+        </ScrollView>
+        </KeyboardAvoidingView>
     );
 }

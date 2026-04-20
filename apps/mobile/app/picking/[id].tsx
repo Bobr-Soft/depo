@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert } from "react-native";
 import { useFocusEffect, useLocalSearchParams, router } from "expo-router";
 import { H2, Text, YStack, XStack, Button, Card, ScrollView, Spinner, Separator } from "@repo/ui";
@@ -7,6 +7,7 @@ import { loadTask, refreshTask } from "@/components/api";
 import { TaskComplete } from "@/constants";
 import { BarcodeScanner } from "@/components";
 import { taskItemPicked } from "@/services/sync";
+import { getScanSoundEnabled, getHapticFeedbackEnabled } from "@/services/secureStorage";
 
 const normalizeBarcode = (value: string) => value.trim().replace(/\s+/g, '').toLowerCase();
 
@@ -17,7 +18,17 @@ export default function PickingDetailScreen() {
   const [task, setTask] = useState<TaskComplete | null>(null);
   const [showScanner, setShowScanner] = useState(false);
   const [scannerKey, setScannerKey] = useState(0);
+  const [isSaving, setIsSaving] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [hapticEnabled, setHapticEnabled] = useState(true);
   const isProcessing = useRef(false);
+
+  useEffect(() => {
+    Promise.all([getScanSoundEnabled(), getHapticFeedbackEnabled()]).then(([s, h]) => {
+      setSoundEnabled(s);
+      setHapticEnabled(h);
+    });
+  }, []);
 
   const fetchTaskDetails = useCallback(async () => {
     setLoading(true);
@@ -81,19 +92,32 @@ export default function PickingDetailScreen() {
           {
             text: "Kész (Teljes mennyiség)",
             onPress: async () => {
+              setIsSaving(true);
               try {
                 await taskItemPicked(matchedItem.task_id, matchedItem.item.id, matchedItem.requested_quantity);
 
                 // Prefer a server-driven refresh for this task to avoid stale cache status.
                 const refreshedTask = await refreshTask(matchedItem.task_id);
-                if (refreshedTask) {
-                  setTask(refreshedTask);
+                const updatedTask = refreshedTask ?? null;
+                if (updatedTask) {
+                  setTask(updatedTask);
                 } else {
                   await fetchTaskDetails();
                 }
 
                 setShowScanner(false);
                 setScannerKey(prev => prev + 1);
+
+                // Check if all items are now completed
+                const items = updatedTask?.items ?? task?.items ?? [];
+                const allDone = items.length > 0 && items.every(i => i.status === 'picked' || i.picked_quantity >= i.requested_quantity);
+                if (allDone) {
+                  Alert.alert(
+                    "Feladat teljesítve!",
+                    "Minden tétel komissiózva lett.",
+                    [{ text: "Vissza a listához", onPress: () => router.replace('/picking') }]
+                  );
+                }
               } catch (pickError) {
                 Alert.alert(
                   "Mentési hiba",
@@ -101,6 +125,7 @@ export default function PickingDetailScreen() {
                   [{ text: "Újra", onPress: () => setScannerKey(prev => prev + 1), style: "default" }]
                 );
               } finally {
+                setIsSaving(false);
                 isProcessing.current = false;
               }
             },
@@ -138,6 +163,8 @@ export default function PickingDetailScreen() {
         title="Termék szkennelés"
         instruction={`Keresd ezt: ${activeItem.item.name} (Polc: ${activeItem.location?.location_code ?? 'Ismeretlen'})`}
         autoResetDelay={0}
+        enableSound={soundEnabled}
+        enableHaptics={hapticEnabled}
       />
     );
   }
@@ -178,6 +205,13 @@ export default function PickingDetailScreen() {
       </YStack>
 
       <Separator borderColor="$color4" marginBottom="$2" />
+
+      {isSaving && (
+        <XStack backgroundColor="$blue5" paddingHorizontal="$4" paddingVertical="$2" alignItems="center" gap="$2">
+          <Spinner size="small" color="$blue10" />
+          <Text fontSize={13} color="$blue10" fontWeight="600">Tétel mentése...</Text>
+        </XStack>
+      )}
 
       {/* TÉTELEK LISTÁJA */}
       <ScrollView flex={1} contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
@@ -223,10 +257,10 @@ export default function PickingDetailScreen() {
                     </XStack>
 
                     <XStack gap="$2" marginTop="$2">
-                      <Button flex={1} size="$4" theme="blue" icon={Barcode} onPress={() => setShowScanner(true)}>
-                        Szkennelés
+                      <Button flex={1} size="$4" theme="blue" icon={Barcode} onPress={() => setShowScanner(true)} disabled={isSaving}>
+                        {isSaving ? 'Feldolgozás...' : 'Szkennelés'}
                       </Button>
-                      <Button size="$4" theme="red" variant="outlined" onPress={() => router.push(`/picking/${id}/edit?item_id=${activeItem.id}`)}>
+                      <Button size="$4" theme="red" variant="outlined" onPress={() => router.push(`/picking/${id}/edit?item_id=${activeItem.id}`)} disabled={isSaving}>
                         Hiány
                       </Button>
                     </XStack>

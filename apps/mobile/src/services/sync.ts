@@ -5,11 +5,47 @@ import { API_TIMEOUT, RETRY_CONFIG } from '@/constants/config';
 import * as db from './database';
 import { markItemAsPicked } from './database';
 import { logout, reauthenticateSilently } from './auth';
+import { logDiagnostic } from './diagnostics';
 
 let isSyncing = false;
 let activeSyncPromise: Promise<{ success: boolean; tasks?: TaskComplete[]; error?: string }> | null = null;
 const MAX_SYNC_RETRY_COUNT = 5;
 let isSyncServiceInitialized = false;
+let lastSyncFailureReason: string | null = null;
+
+type SyncTriggerSource = 'startup' | 'manual' | 'reconnect' | 'background' | 'task-item-picked' | 'task-refresh';
+
+function createOperationId(): string {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function classifySyncError(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return 'unknown';
+  }
+
+  if (error.name === 'AbortError' || error.message.includes('timeout')) {
+    return 'timeout';
+  }
+
+  if (
+    error.message.includes('Network') ||
+    error.message.includes('ECONNREFUSED') ||
+    error.message.includes('ETIMEDOUT')
+  ) {
+    return 'network';
+  }
+
+  if (error.message.includes('Unauthorized') || error.message.includes('token')) {
+    return 'auth';
+  }
+
+  if (error.message.includes('offline')) {
+    return 'offline';
+  }
+
+  return 'unknown';
+}
 
 class ApiSyncError extends Error {
   statusCode: number;
@@ -42,10 +78,10 @@ type TaskCreateQueuePayload = {
   source_id?: string | null;
   deadline?: string | null;
   assigned_user?: number | null;
-  items?: Array<{
+  items?: {
     item_id: number;
     requested_quantity: number;
-  }>;
+  }[];
 };
 
 function isJwtToken(token: string): boolean {
@@ -168,7 +204,7 @@ async function fetchTasksFromApi(): Promise<TaskComplete[]> {
             }
           }
 
-          await logout();
+          await logout('auth_recovery_failed');
           await db.clearDatabase();
           throw new Error('Unauthorized. Please log in again.');
         }
@@ -194,6 +230,12 @@ async function fetchTasksFromApi(): Promise<TaskComplete[]> {
       if (isRetryable && attempt < RETRY_CONFIG.maxAttempts) {
         const delay = getBackoffDelay(attempt);
         console.warn(`Attempt ${attempt} failed (${lastError.message}), retrying in ${Math.round(delay)}ms...`);
+        logDiagnostic('sync.fetch.retry', {
+          attempt,
+          maxAttempts: RETRY_CONFIG.maxAttempts,
+          retryDelayMs: Math.round(delay),
+          error: lastError.message,
+        }, 'warn');
         await sleep(delay);
         continue;
       }
@@ -431,8 +473,19 @@ async function pushSyncQueue(token: string, apiUrl: string): Promise<void> {
 
   console.log(`Processing ${queue.length} pending sync operations...`);
 
+  // Track idempotency keys processed in this push cycle to skip duplicates
+  const processedKeys = new Set<string>();
+
   for (const operation of queue) {
     try {
+      // Skip if we've already processed this idempotency key in this cycle
+      const idempotencyKey = (operation as any).idempotency_key;
+      if (idempotencyKey && processedKeys.has(idempotencyKey)) {
+        console.log(`Skipping duplicate idempotency key: ${idempotencyKey}`);
+        await db.removeSyncOperation(operation.id);
+        continue;
+      }
+
       const payload = JSON.parse(operation.payload);
       const nextAttempt = (operation.retry_count ?? 0) + 1;
 
@@ -458,6 +511,7 @@ async function pushSyncQueue(token: string, apiUrl: string): Promise<void> {
           }
 
           console.log(`✅ Synced task create operation ${operation.id}`);
+          if (idempotencyKey) processedKeys.add(idempotencyKey);
           await db.removeSyncOperation(operation.id);
         } catch (apiError) {
           if (apiError instanceof ApiSyncError && isNonRetryableStatus(apiError.statusCode)) {
@@ -466,6 +520,13 @@ async function pushSyncQueue(token: string, apiUrl: string): Promise<void> {
               message: apiError.message,
               attempt: nextAttempt,
             });
+            logDiagnostic('sync.queue.deadletter', {
+              opId: operation.id,
+              entityType: operation.entity_type,
+              operation: operation.operation,
+              reason: 'non_retryable_status',
+              statusCode: apiError.statusCode,
+            }, 'warn');
             continue;
           }
 
@@ -474,9 +535,80 @@ async function pushSyncQueue(token: string, apiUrl: string): Promise<void> {
               message: apiError instanceof Error ? apiError.message : 'Unknown error',
               attempt: nextAttempt,
             });
+            logDiagnostic('sync.queue.deadletter', {
+              opId: operation.id,
+              entityType: operation.entity_type,
+              operation: operation.operation,
+              reason: 'max_retries_exceeded',
+            }, 'warn');
             continue;
           }
 
+          await db.incrementSyncRetry(operation.id);
+        }
+      } else if (operation.entity_type === 'task' && operation.operation === 'UPDATE') {
+        // Push task-level status update to server (e.g. completed)
+        const taskId = operation.entity_id;
+        const { status } = payload;
+
+        try {
+          const response = await fetchWithTimeout(buildApiUrl(apiUrl, `/tasks/${taskId}/status`), {
+            method: 'PUT',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ status }),
+          }).catch((error) => {
+            if (error instanceof Error && error.name === 'AbortError') {
+              throw new Error(`Timed out updating task status from sync queue after ${API_TIMEOUT}ms`);
+            }
+            throw error;
+          });
+
+          if (!response.ok) {
+            const errorText = await response.text().catch(() => 'Unknown error');
+            throw new ApiSyncError(response.status, `API error: ${response.status} - ${errorText}`);
+          }
+
+          console.log(`✅ Synced task ${taskId} status (${status}) to server`);
+          if (idempotencyKey) processedKeys.add(idempotencyKey);
+          await db.removeSyncOperation(operation.id);
+        } catch (apiError) {
+          if (apiError instanceof ApiSyncError && isNonRetryableStatus(apiError.statusCode)) {
+            await db.moveSyncOperationToDeadLetter(operation.id, db.DEAD_LETTER_REASONS.nonRetryableStatus, {
+              statusCode: apiError.statusCode,
+              message: apiError.message,
+              attempt: nextAttempt,
+            });
+            logDiagnostic('sync.queue.deadletter', {
+              opId: operation.id,
+              entityType: operation.entity_type,
+              operation: operation.operation,
+              reason: 'non_retryable_status',
+              statusCode: apiError.statusCode,
+            }, 'warn');
+            continue;
+          }
+
+          if (nextAttempt >= MAX_SYNC_RETRY_COUNT) {
+            await db.moveSyncOperationToDeadLetter(operation.id, db.DEAD_LETTER_REASONS.maxRetriesExceeded, {
+              message: apiError instanceof Error ? apiError.message : 'Unknown error',
+              attempt: nextAttempt,
+            });
+            logDiagnostic('sync.queue.deadletter', {
+              opId: operation.id,
+              entityType: operation.entity_type,
+              operation: operation.operation,
+              reason: 'max_retries_exceeded',
+            }, 'warn');
+            continue;
+          }
+
+          console.warn(
+            `⚠️  Failed to push task status update ${operation.id} (attempt ${nextAttempt}):`,
+            apiError instanceof Error ? apiError.message : 'Unknown error'
+          );
           await db.incrementSyncRetry(operation.id);
         }
       } else if (operation.entity_type === 'task_item' && operation.operation === 'UPDATE') {
@@ -517,7 +649,7 @@ async function pushSyncQueue(token: string, apiUrl: string): Promise<void> {
           if (!response.ok) {
             const errorText = await response.text().catch(() => 'Unknown error');
             if (response.status === 401 || response.status === 403) {
-              console.error(`Auth error: ${response.status} - ${errorText}`);
+              console.warn(`[sync] Task-item auth denied (${response.status}), will dead-letter`);
               throw new ApiSyncError(response.status, 'Unauthorized');
             }
             throw new ApiSyncError(response.status, `API error: ${response.status} - ${errorText}`);
@@ -533,6 +665,13 @@ async function pushSyncQueue(token: string, apiUrl: string): Promise<void> {
               message: apiError.message,
               attempt: nextAttempt,
             });
+            logDiagnostic('sync.queue.deadletter', {
+              opId: operation.id,
+              entityType: operation.entity_type,
+              operation: operation.operation,
+              reason: 'non_retryable_status',
+              statusCode: apiError.statusCode,
+            }, 'warn');
             continue;
           }
 
@@ -541,6 +680,12 @@ async function pushSyncQueue(token: string, apiUrl: string): Promise<void> {
               message: apiError instanceof Error ? apiError.message : 'Unknown error',
               attempt: nextAttempt,
             });
+            logDiagnostic('sync.queue.deadletter', {
+              opId: operation.id,
+              entityType: operation.entity_type,
+              operation: operation.operation,
+              reason: 'max_retries_exceeded',
+            }, 'warn');
             continue;
           }
 
@@ -554,6 +699,7 @@ async function pushSyncQueue(token: string, apiUrl: string): Promise<void> {
         try {
           await upsertInboundItem(token, apiUrl, payload as InboundItemUpsertPayload);
           console.log(`✅ Synced inbound item operation ${operation.id}`);
+          if (idempotencyKey) processedKeys.add(idempotencyKey);
           await db.removeSyncOperation(operation.id);
         } catch (apiError) {
           if (apiError instanceof ApiSyncError && isNonRetryableStatus(apiError.statusCode)) {
@@ -562,6 +708,13 @@ async function pushSyncQueue(token: string, apiUrl: string): Promise<void> {
               message: apiError.message,
               attempt: nextAttempt,
             });
+            logDiagnostic('sync.queue.deadletter', {
+              opId: operation.id,
+              entityType: operation.entity_type,
+              operation: operation.operation,
+              reason: 'non_retryable_status',
+              statusCode: apiError.statusCode,
+            }, 'warn');
             continue;
           }
 
@@ -570,6 +723,12 @@ async function pushSyncQueue(token: string, apiUrl: string): Promise<void> {
               message: apiError instanceof Error ? apiError.message : 'Unknown error',
               attempt: nextAttempt,
             });
+            logDiagnostic('sync.queue.deadletter', {
+              opId: operation.id,
+              entityType: operation.entity_type,
+              operation: operation.operation,
+              reason: 'max_retries_exceeded',
+            }, 'warn');
             continue;
           }
 
@@ -617,26 +776,58 @@ export async function syncData(): Promise<{
   success: boolean;
   tasks?: TaskComplete[];
   error?: string;
+}>;
+export async function syncData(options: {
+  trigger: SyncTriggerSource;
+  context?: Record<string, unknown>;
+}): Promise<{
+  success: boolean;
+  tasks?: TaskComplete[];
+  error?: string;
+}>;
+export async function syncData(options?: {
+  trigger: SyncTriggerSource;
+  context?: Record<string, unknown>;
+}): Promise<{
+  success: boolean;
+  tasks?: TaskComplete[];
+  error?: string;
 }> {
+  const opId = createOperationId();
+  const trigger = options?.trigger ?? 'background';
+
   if (activeSyncPromise) {
     console.log('Sync already in progress, joining active sync...');
+    logDiagnostic('sync.join_existing', { opId, trigger });
     return activeSyncPromise;
   }
 
   activeSyncPromise = (async () => {
+    const startedAt = Date.now();
+
     // Lock immediately to prevent race between concurrent callers.
     isSyncing = true;
+    lastSyncFailureReason = null;
+    logDiagnostic('sync.started', {
+      opId,
+      trigger,
+      ...options?.context,
+    });
 
     try {
       // Check if database is initialized
       if (!db.isDatabaseInitialized()) {
         console.warn('Database not initialized, sync skipped');
+        lastSyncFailureReason = 'db_not_initialized';
+        logDiagnostic('sync.skipped', { opId, trigger, reason: lastSyncFailureReason }, 'warn');
         return { success: false, error: 'Database not initialized' };
       }
 
       const online = await isOnline();
       if (!online) {
         console.log('Device is offline, sync skipped');
+        lastSyncFailureReason = 'offline';
+        logDiagnostic('sync.skipped', { opId, trigger, reason: lastSyncFailureReason }, 'warn');
         return { success: false, error: 'Device is offline' };
       }
 
@@ -652,10 +843,24 @@ export async function syncData(): Promise<{
       const tasks = await pullRemoteData();
 
       console.log('Sync completed successfully');
+      logDiagnostic('sync.success', {
+        opId,
+        trigger,
+        durationMs: Date.now() - startedAt,
+        taskCount: tasks.length,
+      });
       return { success: true, tasks };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      lastSyncFailureReason = classifySyncError(error);
       console.error('Sync failed:', errorMessage);
+      logDiagnostic('sync.failed', {
+        opId,
+        trigger,
+        durationMs: Date.now() - startedAt,
+        reason: lastSyncFailureReason,
+        error: errorMessage,
+      }, 'error');
       return { success: false, error: errorMessage };
     } finally {
       isSyncing = false;
@@ -687,7 +892,7 @@ export async function getTasksWithSync(): Promise<{
   // Try to sync in background if online
   const online = await isOnline();
   if (online && !isSyncing) {
-    syncData().catch((error) => {
+    syncData({ trigger: 'background' }).catch((error) => {
       console.error('Background sync failed:', error);
     });
   }
@@ -715,7 +920,7 @@ export async function forceRefresh(): Promise<{
     };
   }
 
-  return await syncData();
+  return await syncData({ trigger: 'manual' });
 }
 
 export async function refreshTaskById(taskId: number): Promise<{
@@ -738,24 +943,21 @@ export async function refreshTaskById(taskId: number): Promise<{
     };
   }
 
-  if (isSyncing) {
-    return {
-      success: false,
-      task: cachedTask ?? undefined,
-      error: 'Sync already in progress. Showing cached data.',
-    };
-  }
-
-  isSyncing = true;
   try {
-    const [apiUrl, token] = await Promise.all([getApiUrl(), getToken()]);
-    if (!apiUrl || !token) {
-      throw new Error('Missing API URL or token for refresh');
+    if (activeSyncPromise) {
+      await activeSyncPromise;
+    } else {
+      await syncData({ trigger: 'task-refresh', context: { taskId } });
     }
 
-    await pushSyncQueue(token, apiUrl);
+    let task = await db.getTaskById(taskId);
+    if (!task) {
+      task = await fetchTaskByIdFromApi(taskId);
+      if (task) {
+        await db.saveTasks([task]);
+      }
+    }
 
-    const task = await fetchTaskByIdFromApi(taskId);
     if (!task) {
       return {
         success: false,
@@ -763,9 +965,6 @@ export async function refreshTaskById(taskId: number): Promise<{
         error: 'Task not found on server',
       };
     }
-
-    await db.saveTasks([task]);
-    await db.setLastSyncTime(Date.now());
 
     return { success: true, task };
   } catch (error) {
@@ -775,8 +974,6 @@ export async function refreshTaskById(taskId: number): Promise<{
       task: cachedTask ?? undefined,
       error: errorMessage,
     };
-  } finally {
-    isSyncing = false;
   }
 }
 
@@ -786,7 +983,7 @@ export async function refreshTaskById(taskId: number): Promise<{
 export function startAutoSync(): void {
   console.log('Starting auto-sync...');
 
-  syncData().catch((error) => {
+  syncData({ trigger: 'startup' }).catch((error) => {
     console.error('Initial sync failed:', error);
   });
 }
@@ -807,6 +1004,7 @@ export async function getSyncStatus(): Promise<{
   lastSyncTime: number | null;
   pendingOperations: number;
   deadLetterOperations: number;
+  lastFailureReason: string | null;
 }> {
   const online = await isOnline();
 
@@ -817,6 +1015,7 @@ export async function getSyncStatus(): Promise<{
       lastSyncTime: null,
       pendingOperations: 0,
       deadLetterOperations: 0,
+      lastFailureReason: lastSyncFailureReason,
     };
   }
 
@@ -830,6 +1029,7 @@ export async function getSyncStatus(): Promise<{
     lastSyncTime: lastSync,
     pendingOperations: queue.length,
     deadLetterOperations,
+    lastFailureReason: lastSyncFailureReason,
   };
 }
 
@@ -843,11 +1043,17 @@ export async function initializeSyncService(): Promise<void> {
 
   try {
     await db.initDatabase();
-    startAutoSync();
+    // Mark initialized before first auto-sync trigger to avoid init-order races.
     isSyncServiceInitialized = true;
+    startAutoSync();
     console.log('Sync service initialized');
+    logDiagnostic('sync.service.initialized');
   } catch (error) {
     console.error('Failed to initialize sync service:', error);
+    logDiagnostic('sync.service.init_failed', {
+      reason: classifySyncError(error),
+      error: error instanceof Error ? error.message : 'Unknown error',
+    }, 'error');
     throw error;
   }
 }
@@ -869,7 +1075,7 @@ export async function taskItemPicked(taskId: number, itemId: number, pickedQuant
   try {
     await markItemAsPicked(taskId, itemId, pickedQuantity);
     // Optionally trigger a sync after marking as picked
-    await syncData();
+    await syncData({ trigger: 'task-item-picked', context: { taskId, itemId } });
   } catch (error) {
     console.error('Failed to mark item as picked:', error);
     throw error;

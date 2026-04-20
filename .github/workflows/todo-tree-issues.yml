@@ -185,6 +185,12 @@ jobs:
               const metaPart = typeMatch[2] || '';
               const title = typeMatch[3].trim();
               const tags = Array.from(metaPart.matchAll(/\[([^\]]+)\]/g)).map((match) => match[1].trim());
+              const isCheckpointTag = tags.some((tag) => tag.toUpperCase().startsWith('CHECKPOINT'));
+              const isCheckpointTitle = title.toUpperCase().startsWith('CHECKPOINT');
+
+              if (isCheckpointTag || isCheckpointTitle) {
+                return null;
+              }
 
               const areas = [];
               let priority = null;

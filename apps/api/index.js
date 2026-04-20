@@ -127,6 +127,31 @@ async function ensureInventoryLogsTable() {
   }
 }
 
+async function ensureRentalsTable() {
+  try {
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS rentals (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        requester_user_id INT,
+        requester_email VARCHAR(255),
+        item_id INT NOT NULL,
+        quantity INT NOT NULL,
+        purpose TEXT,
+        status VARCHAR(50) DEFAULT 'pending',
+        reviewed_by INT,
+        review_note TEXT,
+        reviewed_at TIMESTAMP NULL,
+        approved_at TIMESTAMP NULL,
+        returned_at TIMESTAMP NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      )
+    `);
+  } catch (err) {
+    console.error('⚠️ Could not create rentals table:', err.message);
+  }
+}
+
 // Initialize database connection test
 let dbConnected = false;
 testDBConnection().then(result => {
@@ -134,6 +159,7 @@ testDBConnection().then(result => {
   if (result) {
     ensureDamageReportsTable();
     ensureInventoryLogsTable();
+    ensureRentalsTable();
   }
 });
 
@@ -170,7 +196,7 @@ function safeStringify(value) {
 
 function normalizeRole(value) {
   if (value === null || value === undefined) {
-    return 'Teacher';
+    return 'Worker';
   }
 
   const raw = Buffer.isBuffer(value)
@@ -179,7 +205,7 @@ function normalizeRole(value) {
 
   const normalized = raw.trim().toLowerCase();
   if (!normalized) {
-    return 'Teacher';
+    return 'Worker';
   }
 
   return normalized.charAt(0).toUpperCase() + normalized.slice(1);
@@ -526,7 +552,7 @@ async function authenticateJWT(req, res, next) {
         if (blockedUsers.has(decoded.email.toLowerCase())) {
           return res.status(401).json({ message: 'Session invalidated by simulator' });
         }
-        req.user = { ...decoded, dbUser: rows[0] };
+        req.user = { ...decoded, role: normalizeRole(rows[0].role), dbUser: rows[0] };
       } catch (dbErr) {
         console.error('❌ Database error during auth:', dbErr.message);
         req.user = decoded;
@@ -580,6 +606,17 @@ app.get('/api', (_req, res) => {
       me: 'GET /me',
       items: 'GET /items',
       tasks: 'GET /tasks',
+      rentals: {
+        create: 'POST /rentals',
+        my: 'GET /rentals/my',
+        pending: 'GET /rentals/pending',
+        all: 'GET /rentals',
+        approve: 'POST /rentals/:id/approve',
+        reject: 'POST /rentals/:id/reject',
+        cancel: 'POST /rentals/:id/cancel',
+        return: 'POST /rentals/:id/return',
+        deleteReturned: 'DELETE /rentals/:id (admin, only returned)',
+      },
     },
   });
 });
@@ -626,7 +663,7 @@ app.post('/login', async (req, res) => {
         }
       }
 
-      const role = rawRole ? rawRole.charAt(0).toUpperCase() + rawRole.slice(1) : 'Teacher';
+      const role = rawRole ? rawRole.charAt(0).toUpperCase() + rawRole.slice(1) : 'Worker';
 
       console.log('✅ Raw role (lowercase):', rawRole);
       console.log('✅ Capitalized role:', role);
@@ -828,6 +865,485 @@ app.delete('/items/:id', authenticateJWT, requireAdmin, async (req, res) => {
   } catch (err) {
     console.error('❌ Error deleting item:', err.message);
     res.status(500).json({ message: 'Database error' });
+  }
+});
+
+function parsePositiveInt(value) {
+  const parsed = Number.parseInt(String(value), 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return null;
+  }
+  return parsed;
+}
+
+function mapRentalRow(row) {
+  return {
+    id: row.id,
+    status: row.status,
+    requesterEmail: row.requester_email ?? null,
+    itemId: row.item_id,
+    itemName: row.item_name ?? null,
+    itemBarcode: row.item_barcode ?? null,
+    quantity: Number.parseInt(String(row.quantity), 10) || 0,
+    purpose: row.purpose ?? null,
+    reviewedByEmail: row.reviewer_email ?? null,
+    reviewNote: row.review_note ?? null,
+    reviewedAt: row.reviewed_at ?? null,
+    approvedAt: row.approved_at ?? null,
+    returnedAt: row.returned_at ?? null,
+    createdAt: row.created_at ?? null,
+    updatedAt: row.updated_at ?? null,
+  };
+}
+
+// ─── Rentals / Kölcsönzés ───────────────────────────────────────────────────
+
+// Create rental request (always starts as pending; must be approved by admin/supervisor)
+app.post('/rentals', authenticateJWT, async (req, res) => {
+  if (!dbConnected) {
+    return res.status(503).json({ message: 'Database not available' });
+  }
+
+  const itemId = parsePositiveInt(req.body?.itemId);
+  const quantity = parsePositiveInt(req.body?.quantity);
+  const purpose = typeof req.body?.purpose === 'string' ? req.body.purpose.trim() : '';
+
+  if (!itemId) {
+    return res.status(400).json({ message: 'Invalid itemId' });
+  }
+  if (!quantity) {
+    return res.status(400).json({ message: 'Invalid quantity' });
+  }
+
+  try {
+    const requesterUserId = resolveAuthenticatedUserId(req);
+    const requesterEmail = req.user?.email ? String(req.user.email) : null;
+
+    const [itemRows] = await db.query('SELECT id FROM items WHERE id = ? LIMIT 1', [itemId]);
+    if (!itemRows.length) {
+      return res.status(404).json({ message: 'Item not found' });
+    }
+
+    const [result] = await db.query(
+      `INSERT INTO rentals (requester_user_id, requester_email, item_id, quantity, purpose, status)
+       VALUES (?, ?, ?, ?, ?, 'pending')`,
+      [requesterUserId, requesterEmail, itemId, quantity, purpose || null]
+    );
+
+    const [rows] = await db.query(
+      `SELECT
+        r.*, i.name AS item_name, i.barcode AS item_barcode,
+        u.email AS reviewer_email
+      FROM rentals r
+      LEFT JOIN items i ON i.id = r.item_id
+      LEFT JOIN users u ON u.id = r.reviewed_by
+      WHERE r.id = ?
+      LIMIT 1`,
+      [result.insertId]
+    );
+
+    return res.status(201).json(mapRentalRow(rows[0]));
+  } catch (err) {
+    console.error('❌ Error creating rental request:', err.message);
+    return res.status(500).json({ message: 'Database error' });
+  }
+});
+
+// List current user's rental requests
+app.get('/rentals/my', authenticateJWT, async (req, res) => {
+  if (!dbConnected) {
+    return res.status(503).json({ message: 'Database not available' });
+  }
+
+  try {
+    const requesterUserId = resolveAuthenticatedUserId(req);
+    const requesterEmail = req.user?.email ? String(req.user.email) : null;
+
+    const whereParts = [];
+    const params = [];
+
+    if (requesterUserId) {
+      whereParts.push('r.requester_user_id = ?');
+      params.push(requesterUserId);
+    }
+    if (requesterEmail) {
+      whereParts.push('LOWER(r.requester_email) = LOWER(?)');
+      params.push(requesterEmail);
+    }
+
+    if (whereParts.length === 0) {
+      return res.status(401).json({ message: 'Unable to resolve authenticated user identity' });
+    }
+
+    const [rows] = await db.query(
+      `SELECT
+        r.*, i.name AS item_name, i.barcode AS item_barcode,
+        u.email AS reviewer_email
+      FROM rentals r
+      LEFT JOIN items i ON i.id = r.item_id
+      LEFT JOIN users u ON u.id = r.reviewed_by
+      WHERE ${whereParts.map((clause) => `(${clause})`).join(' OR ')}
+      ORDER BY r.created_at DESC`,
+      params
+    );
+
+    return res.json(rows.map(mapRentalRow));
+  } catch (err) {
+    console.error('❌ Error fetching my rentals:', err.message);
+    return res.status(500).json({ message: 'Database error' });
+  }
+});
+
+// Pending approvals (supervisor/admin)
+app.get('/rentals/pending', authenticateJWT, requireSupervisorOrAdmin, async (req, res) => {
+  if (!dbConnected) {
+    return res.status(503).json({ message: 'Database not available' });
+  }
+
+  try {
+    const [rows] = await db.query(
+      `SELECT
+        r.*, i.name AS item_name, i.barcode AS item_barcode,
+        u.email AS reviewer_email
+      FROM rentals r
+      LEFT JOIN items i ON i.id = r.item_id
+      LEFT JOIN users u ON u.id = r.reviewed_by
+      WHERE LOWER(r.status) = 'pending'
+      ORDER BY r.created_at ASC`
+    );
+    return res.json(rows.map(mapRentalRow));
+  } catch (err) {
+    console.error('❌ Error fetching pending rentals:', err.message);
+    return res.status(500).json({ message: 'Database error' });
+  }
+});
+
+// List all rentals (supervisor/admin)
+app.get('/rentals', authenticateJWT, requireSupervisorOrAdmin, async (req, res) => {
+  if (!dbConnected) {
+    return res.status(503).json({ message: 'Database not available' });
+  }
+
+  try {
+    const [rows] = await db.query(
+      `SELECT
+        r.*, i.name AS item_name, i.barcode AS item_barcode,
+        u.email AS reviewer_email
+      FROM rentals r
+      LEFT JOIN items i ON i.id = r.item_id
+      LEFT JOIN users u ON u.id = r.reviewed_by
+      ORDER BY r.created_at DESC`
+    );
+    return res.json(rows.map(mapRentalRow));
+  } catch (err) {
+    console.error('❌ Error fetching rentals:', err.message);
+    return res.status(500).json({ message: 'Database error' });
+  }
+});
+
+// Cancel a pending rental (requester only)
+app.post('/rentals/:id/cancel', authenticateJWT, async (req, res) => {
+  if (!dbConnected) {
+    return res.status(503).json({ message: 'Database not available' });
+  }
+
+  const rentalId = parsePositiveInt(req.params.id);
+  if (!rentalId) {
+    return res.status(400).json({ message: 'Invalid rental id' });
+  }
+
+  try {
+    const requesterUserId = resolveAuthenticatedUserId(req);
+    const requesterEmail = req.user?.email ? String(req.user.email) : null;
+
+    const [rows] = await db.query('SELECT id, requester_user_id, requester_email, status FROM rentals WHERE id = ? LIMIT 1', [rentalId]);
+    if (!rows.length) {
+      return res.status(404).json({ message: 'Rental not found' });
+    }
+
+    const rental = rows[0];
+    if (String(rental.status || '').toLowerCase() !== 'pending') {
+      return res.status(409).json({ message: 'Only pending rentals can be cancelled' });
+    }
+
+    const matchesUserId = requesterUserId && Number(rental.requester_user_id) === requesterUserId;
+    const matchesEmail = requesterEmail && rental.requester_email && String(rental.requester_email).toLowerCase() === requesterEmail.toLowerCase();
+    if (!matchesUserId && !matchesEmail) {
+      return res.status(403).json({ message: 'Not allowed to cancel this rental' });
+    }
+
+    await db.query('UPDATE rentals SET status = ?, updated_at = NOW() WHERE id = ?', ['cancelled', rentalId]);
+    return res.json({ id: rentalId, status: 'cancelled' });
+  } catch (err) {
+    console.error('❌ Error cancelling rental:', err.message);
+    return res.status(500).json({ message: 'Database error' });
+  }
+});
+
+// Approve rental (supervisor/admin) - deduct inventory on approval
+app.post('/rentals/:id/approve', authenticateJWT, requireSupervisorOrAdmin, async (req, res) => {
+  if (!dbConnected) {
+    return res.status(503).json({ message: 'Database not available' });
+  }
+
+  const rentalId = parsePositiveInt(req.params.id);
+  if (!rentalId) {
+    return res.status(400).json({ message: 'Invalid rental id' });
+  }
+
+  const reviewerId = resolveAuthenticatedUserId(req);
+  if (!reviewerId) {
+    return res.status(401).json({ message: 'Unable to resolve authenticated user id' });
+  }
+
+  const reviewNote = typeof req.body?.note === 'string' ? req.body.note.trim() : null;
+
+  const connection = await db.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const [rentalRows] = await connection.query(
+      `SELECT id, item_id, quantity, status
+       FROM rentals
+       WHERE id = ?
+       LIMIT 1
+       FOR UPDATE`,
+      [rentalId]
+    );
+
+    if (!rentalRows.length) {
+      await connection.rollback();
+      return res.status(404).json({ message: 'Rental not found' });
+    }
+
+    const rental = rentalRows[0];
+    if (String(rental.status || '').toLowerCase() !== 'pending') {
+      await connection.rollback();
+      return res.status(409).json({ message: 'Only pending rentals can be approved' });
+    }
+
+    const [itemRows] = await connection.query(
+      `SELECT id, quantity
+       FROM items
+       WHERE id = ?
+       LIMIT 1
+       FOR UPDATE`,
+      [rental.item_id]
+    );
+
+    if (!itemRows.length) {
+      await connection.rollback();
+      return res.status(404).json({ message: 'Item not found' });
+    }
+
+    const currentQty = Number.parseInt(String(itemRows[0].quantity), 10) || 0;
+    const requestedQty = Number.parseInt(String(rental.quantity), 10) || 0;
+    if (requestedQty <= 0) {
+      await connection.rollback();
+      return res.status(400).json({ message: 'Invalid rental quantity' });
+    }
+
+    if (currentQty < requestedQty) {
+      await connection.rollback();
+      return res.status(409).json({ message: 'Not enough stock to approve this rental' });
+    }
+
+    await connection.query('UPDATE items SET quantity = ? WHERE id = ?', [currentQty - requestedQty, rental.item_id]);
+    await connection.query(
+      `INSERT INTO inventory_logs (item_id, user_id, action_type, change_amount)
+       VALUES (?, ?, ?, ?)`,
+      [rental.item_id, reviewerId, 'rental_approved', -requestedQty]
+    );
+
+    await connection.query(
+      `UPDATE rentals
+       SET status = 'approved', reviewed_by = ?, review_note = ?, reviewed_at = NOW(), approved_at = NOW(), updated_at = NOW()
+       WHERE id = ?`,
+      [reviewerId, reviewNote, rentalId]
+    );
+
+    await connection.commit();
+    return res.json({ id: rentalId, status: 'approved' });
+  } catch (err) {
+    await connection.rollback();
+    console.error('❌ Error approving rental:', err.message);
+    return res.status(500).json({ message: 'Database error' });
+  } finally {
+    connection.release();
+  }
+});
+
+// Reject rental (supervisor/admin)
+app.post('/rentals/:id/reject', authenticateJWT, requireSupervisorOrAdmin, async (req, res) => {
+  if (!dbConnected) {
+    return res.status(503).json({ message: 'Database not available' });
+  }
+
+  const rentalId = parsePositiveInt(req.params.id);
+  if (!rentalId) {
+    return res.status(400).json({ message: 'Invalid rental id' });
+  }
+
+  const reviewerId = resolveAuthenticatedUserId(req);
+  if (!reviewerId) {
+    return res.status(401).json({ message: 'Unable to resolve authenticated user id' });
+  }
+
+  const reviewNote = typeof req.body?.note === 'string' ? req.body.note.trim() : null;
+
+  try {
+    const [rows] = await db.query('SELECT id, status FROM rentals WHERE id = ? LIMIT 1', [rentalId]);
+    if (!rows.length) {
+      return res.status(404).json({ message: 'Rental not found' });
+    }
+
+    if (String(rows[0].status || '').toLowerCase() !== 'pending') {
+      return res.status(409).json({ message: 'Only pending rentals can be rejected' });
+    }
+
+    await db.query(
+      `UPDATE rentals
+       SET status = 'rejected', reviewed_by = ?, review_note = ?, reviewed_at = NOW(), updated_at = NOW()
+       WHERE id = ?`,
+      [reviewerId, reviewNote, rentalId]
+    );
+
+    return res.json({ id: rentalId, status: 'rejected' });
+  } catch (err) {
+    console.error('❌ Error rejecting rental:', err.message);
+    return res.status(500).json({ message: 'Database error' });
+  }
+});
+
+// Return rental (requester or supervisor/admin) - adds inventory back
+app.post('/rentals/:id/return', authenticateJWT, async (req, res) => {
+  if (!dbConnected) {
+    return res.status(503).json({ message: 'Database not available' });
+  }
+
+  const rentalId = parsePositiveInt(req.params.id);
+  if (!rentalId) {
+    return res.status(400).json({ message: 'Invalid rental id' });
+  }
+
+  const userId = resolveAuthenticatedUserId(req);
+  const userEmail = req.user?.email ? String(req.user.email) : null;
+  const userRole = String(req.user?.role || '').toLowerCase();
+  const isApprover = userRole === 'admin' || userRole === 'supervisor';
+
+  const connection = await db.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const [rentalRows] = await connection.query(
+      `SELECT id, item_id, quantity, status, requester_user_id, requester_email
+       FROM rentals
+       WHERE id = ?
+       LIMIT 1
+       FOR UPDATE`,
+      [rentalId]
+    );
+
+    if (!rentalRows.length) {
+      await connection.rollback();
+      return res.status(404).json({ message: 'Rental not found' });
+    }
+
+    const rental = rentalRows[0];
+
+    const matchesUserId = userId && Number(rental.requester_user_id) === userId;
+    const matchesEmail = userEmail && rental.requester_email && String(rental.requester_email).toLowerCase() === userEmail.toLowerCase();
+    if (!isApprover && !matchesUserId && !matchesEmail) {
+      await connection.rollback();
+      return res.status(403).json({ message: 'Not allowed to return this rental' });
+    }
+
+    if (String(rental.status || '').toLowerCase() !== 'approved') {
+      await connection.rollback();
+      return res.status(409).json({ message: 'Only approved rentals can be returned' });
+    }
+
+    const [itemRows] = await connection.query(
+      `SELECT id, quantity
+       FROM items
+       WHERE id = ?
+       LIMIT 1
+       FOR UPDATE`,
+      [rental.item_id]
+    );
+
+    if (!itemRows.length) {
+      await connection.rollback();
+      return res.status(404).json({ message: 'Item not found' });
+    }
+
+    const currentQty = Number.parseInt(String(itemRows[0].quantity), 10) || 0;
+    const rentalQty = Number.parseInt(String(rental.quantity), 10) || 0;
+    if (rentalQty <= 0) {
+      await connection.rollback();
+      return res.status(400).json({ message: 'Invalid rental quantity' });
+    }
+
+    await connection.query('UPDATE items SET quantity = ? WHERE id = ?', [currentQty + rentalQty, rental.item_id]);
+    if (userId) {
+      await connection.query(
+        `INSERT INTO inventory_logs (item_id, user_id, action_type, change_amount)
+         VALUES (?, ?, ?, ?)`,
+        [rental.item_id, userId, 'rental_returned', rentalQty]
+      );
+    }
+
+    await connection.query(
+      `UPDATE rentals
+       SET status = 'returned', returned_at = NOW(), updated_at = NOW()
+       WHERE id = ?`,
+      [rentalId]
+    );
+
+    await connection.commit();
+    return res.json({ id: rentalId, status: 'returned' });
+  } catch (err) {
+    await connection.rollback();
+    console.error('❌ Error returning rental:', err.message);
+    return res.status(500).json({ message: 'Database error' });
+  } finally {
+    connection.release();
+  }
+});
+
+// Delete a returned rental (admin only) - historical cleanup
+app.delete('/rentals/:id', authenticateJWT, requireAdmin, async (req, res) => {
+  if (!dbConnected) {
+    return res.status(503).json({ message: 'Database not available' });
+  }
+
+  const rentalId = parsePositiveInt(req.params.id);
+  if (!rentalId) {
+    return res.status(400).json({ message: 'Invalid rental id' });
+  }
+
+  try {
+    const [rows] = await db.query('SELECT id, status FROM rentals WHERE id = ? LIMIT 1', [rentalId]);
+    if (!rows.length) {
+      return res.status(404).json({ message: 'Rental not found' });
+    }
+
+    const status = String(rows[0].status || '').toLowerCase();
+    if (status !== 'returned') {
+      return res.status(409).json({ message: 'Only returned rentals can be deleted' });
+    }
+
+    const [result] = await db.query('DELETE FROM rentals WHERE id = ?', [rentalId]);
+    if (result?.affectedRows === 0) {
+      return res.status(404).json({ message: 'Rental not found' });
+    }
+
+    return res.json({ id: rentalId, deleted: true });
+  } catch (err) {
+    console.error('❌ Error deleting rental:', err.message);
+    return res.status(500).json({ message: 'Database error' });
   }
 });
 
@@ -1671,8 +2187,19 @@ app.get('/categories', authenticateJWT, async (req, res) => {
   try {
     if (dbConnected) {
       const capabilities = await getCategoriesSchemaCapabilities();
+
+      const selectParts = ['id', 'name', getCategoryDescriptionSelectExpr(capabilities)];
+
+      if (capabilities.hasSizeClass) {
+        selectParts.push('size_class');
+      }
+
+      if (capabilities.hasMinStockLevel) {
+        selectParts.push('min_stock_level');
+      }
+
       const [rows] = await db.query(
-        `SELECT id, name, ${getCategoryDescriptionSelectExpr(capabilities)} FROM categories`
+        `SELECT ${selectParts.join(', ')} FROM categories`
       );
       res.json(rows);
     } else {
@@ -1783,6 +2310,10 @@ app.get('/locations', authenticateJWT, async (req, res) => {
         getLocationNameSelectExpr(capabilities),
         getLocationDescriptionSelectExpr(capabilities),
       ];
+
+      if (capabilities.hasLocationCode) {
+        selectParts.push('location_code');
+      }
 
       if (capabilities.hasRowNum) {
         selectParts.push('row_num');
@@ -2251,35 +2782,12 @@ async function handleInboundPutaway(req, res) {
       return res.status(400).json({ message: 'No putaway location available' });
     }
 
-    const [inventoryRows] = await connection.query(
-      `SELECT id, quantity
-       FROM inventory
-       WHERE item_id = ? AND location_id = ?
-       LIMIT 1
-       FOR UPDATE`,
-      [parsedItemId, location.id]
-    );
-
-    if (inventoryRows.length > 0) {
-      await connection.query(
-        `UPDATE inventory
-         SET quantity = COALESCE(quantity, 0) + ?
-         WHERE id = ?`,
-        [parsedQuantity, inventoryRows[0].id]
-      );
-    } else {
-      await connection.query(
-        `INSERT INTO inventory (item_id, location_id, quantity)
-         VALUES (?, ?, ?)`,
-        [parsedItemId, location.id, parsedQuantity]
-      );
-    }
-
     await connection.query(
       `UPDATE items
-       SET quantity = COALESCE(quantity, 0) + ?
+       SET quantity = COALESCE(quantity, 0) + ?,
+           location_id = ?
        WHERE id = ?`,
-      [parsedQuantity, parsedItemId]
+      [parsedQuantity, location.id, parsedItemId]
     );
 
     await connection.commit();
@@ -2291,8 +2799,8 @@ async function handleInboundPutaway(req, res) {
     });
   } catch (err) {
     await connection.rollback();
-    console.error('❌ Error processing putaway:', err.message);
-    return res.status(500).json({ message: 'Database error' });
+    console.error('❌ Error processing putaway:', err.code, err.message, err.sql);
+    return res.status(500).json({ message: 'Database error', detail: err.message });
   } finally {
     connection.release();
   }
@@ -2429,6 +2937,141 @@ app.post('/tasks/:taskId/release', authenticateJWT, async (req, res) => {
   } catch (err) {
     await connection.rollback();
     console.error('❌ Error releasing task:', err.message);
+    return res.status(500).json({ message: 'Database error' });
+  } finally {
+    connection.release();
+  }
+});
+
+// POST Assign task to a specific user (supervisor/admin only)
+app.post('/tasks/:taskId/assign', authenticateJWT, requireSupervisorOrAdmin, async (req, res) => {
+  const parsedTaskId = Number.parseInt(req.params.taskId, 10);
+  if (!Number.isInteger(parsedTaskId) || parsedTaskId <= 0) {
+    return res.status(400).json({ message: 'Invalid taskId' });
+  }
+
+  const assignedUserId = Number.parseInt(String(req.body?.userId), 10);
+  if (!Number.isInteger(assignedUserId) || assignedUserId <= 0) {
+    return res.status(400).json({ message: 'Invalid userId' });
+  }
+
+  if (!dbConnected) {
+    return res.status(503).json({ message: 'Database not available' });
+  }
+
+  const connection = await db.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const [taskRows] = await connection.query(
+      'SELECT id, assigned_user, status FROM tasks WHERE id = ? LIMIT 1 FOR UPDATE',
+      [parsedTaskId]
+    );
+
+    if (!taskRows.length) {
+      await connection.rollback();
+      return res.status(404).json({ message: 'Task not found' });
+    }
+
+    const task = taskRows[0];
+    const currentStatus = String(task.status || '').toLowerCase();
+    if (currentStatus === 'completed' || currentStatus === 'cancelled') {
+      await connection.rollback();
+      return res.status(409).json({ message: 'Completed or cancelled tasks cannot be reassigned' });
+    }
+
+    // Verify target user exists
+    const [userRows] = await connection.query('SELECT id FROM users WHERE id = ? LIMIT 1', [assignedUserId]);
+    if (!userRows.length) {
+      await connection.rollback();
+      return res.status(404).json({ message: 'Target user not found' });
+    }
+
+    await connection.query(
+      'UPDATE tasks SET assigned_user = ?, updated_at = NOW() WHERE id = ?',
+      [assignedUserId, parsedTaskId]
+    );
+
+    await connection.commit();
+    return res.json({ message: 'Task assigned successfully', taskId: parsedTaskId, assigned_user: assignedUserId });
+  } catch (err) {
+    await connection.rollback();
+    console.error('❌ Error assigning task:', err.message);
+    return res.status(500).json({ message: 'Database error' });
+  } finally {
+    connection.release();
+  }
+});
+
+// PUT Update task status explicitly (supervisor/admin or assigned worker)
+app.put('/tasks/:taskId/status', authenticateJWT, async (req, res) => {
+  const parsedTaskId = Number.parseInt(req.params.taskId, 10);
+  if (!Number.isInteger(parsedTaskId) || parsedTaskId <= 0) {
+    return res.status(400).json({ message: 'Invalid taskId' });
+  }
+
+  const VALID_STATUSES = ['pending', 'in_progress', 'completed', 'cancelled'];
+  const VALID_TRANSITIONS = {
+    pending: ['in_progress', 'cancelled'],
+    in_progress: ['pending', 'completed', 'cancelled'],
+    completed: [],
+    cancelled: [],
+  };
+
+  const newStatus = String(req.body?.status || '').trim().toLowerCase();
+  if (!VALID_STATUSES.includes(newStatus)) {
+    return res.status(400).json({ message: `Invalid status. Must be one of: ${VALID_STATUSES.join(', ')}` });
+  }
+
+  if (!dbConnected) {
+    return res.status(503).json({ message: 'Database not available' });
+  }
+
+  const userId = resolveAuthenticatedUserId(req);
+  const userRole = String(req.user?.dbUser?.role || req.user?.role || '').toLowerCase();
+
+  const connection = await db.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const [taskRows] = await connection.query(
+      'SELECT id, assigned_user, status FROM tasks WHERE id = ? LIMIT 1 FOR UPDATE',
+      [parsedTaskId]
+    );
+
+    if (!taskRows.length) {
+      await connection.rollback();
+      return res.status(404).json({ message: 'Task not found' });
+    }
+
+    const task = taskRows[0];
+    const currentStatus = String(task.status || '').toLowerCase();
+    const isAdminOrSupervisor = userRole === 'admin' || userRole === 'supervisor';
+    const isAssignedUser = userId && Number(task.assigned_user) === userId;
+
+    if (!isAdminOrSupervisor && !isAssignedUser) {
+      await connection.rollback();
+      return res.status(403).json({ message: 'Only the assigned user, supervisor, or admin can update task status' });
+    }
+
+    const allowedTransitions = VALID_TRANSITIONS[currentStatus] || [];
+    if (!isAdminOrSupervisor && !allowedTransitions.includes(newStatus)) {
+      await connection.rollback();
+      return res.status(409).json({ message: `Cannot transition from '${currentStatus}' to '${newStatus}'` });
+    }
+
+    await connection.query(
+      'UPDATE tasks SET status = ?, updated_at = NOW() WHERE id = ?',
+      [newStatus, parsedTaskId]
+    );
+
+    await connection.commit();
+    return res.json({ message: 'Task status updated', taskId: parsedTaskId, status: newStatus, previousStatus: currentStatus });
+  } catch (err) {
+    await connection.rollback();
+    console.error('❌ Error updating task status:', err.message);
     return res.status(500).json({ message: 'Database error' });
   } finally {
     connection.release();
@@ -2742,8 +3385,13 @@ app.post('/tasks', authenticateJWT, requireAdmin, async (req, res) => {
 
       await connection.commit();
 
-      const [rows] = await db.query('SELECT * FROM tasks WHERE id = ?', [newId]);
-      return res.status(201).json(rows[0]);
+      const enrichedTask = await getTaskByIdForUser(
+        newId,
+        req.user?.email,
+        req.user?.dbUser?.id ?? req.user?.userId,
+        req.user?.role
+      );
+      return res.status(201).json(enrichedTask);
     } catch (txErr) {
       await connection.rollback();
       throw txErr;
@@ -2809,8 +3457,13 @@ app.put('/tasks/:id', authenticateJWT, requireAdmin, async (req, res) => {
     if (!dbConnected) return res.status(503).json({ message: 'Database not available' });
     const [result] = await db.query(`UPDATE tasks SET ${updates.join(', ')} WHERE id = ?`, values);
     if (result.affectedRows === 0) return res.status(404).json({ message: 'Task not found' });
-    const [rows] = await db.query('SELECT * FROM tasks WHERE id = ?', [taskId]);
-    return res.json(rows[0]);
+    const enrichedTask = await getTaskByIdForUser(
+      taskId,
+      req.user?.email,
+      req.user?.dbUser?.id ?? req.user?.userId,
+      req.user?.role
+    );
+    return res.json(enrichedTask);
   } catch (err) {
     console.error('❌ Error updating task:', err.message);
     return res.status(500).json({ message: 'Database error' });
@@ -2952,8 +3605,8 @@ async function handleTaskItemException(req, res) {
 
     const [inventoryRows] = await connection.query(
       `SELECT id, quantity
-       FROM inventory
-       WHERE item_id = ? AND location_id = ?
+       FROM items
+       WHERE id = ? AND location_id = ?
        LIMIT 1
        FOR UPDATE`,
       [parsedItemId, parsedLocationId]
@@ -2961,7 +3614,7 @@ async function handleTaskItemException(req, res) {
 
     if (!inventoryRows.length) {
       await connection.rollback();
-      return res.status(404).json({ message: 'Inventory row not found for item and location' });
+      return res.status(404).json({ message: 'Item not found for this location' });
     }
 
     const inventoryRow = inventoryRows[0];
@@ -2990,7 +3643,7 @@ async function handleTaskItemException(req, res) {
     );
 
     await connection.query(
-      `UPDATE inventory
+      `UPDATE items
        SET quantity = ?
        WHERE id = ?`,
       [nextQuantity, inventoryRow.id]

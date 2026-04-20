@@ -3,7 +3,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ScrollView, YStack, XStack, Button, Text, H2, Card, Separator, Spinner } from "@repo/ui";
 import { ArrowLeft, AlertTriangle, RefreshCw, CheckCircle2, XCircle, Clock, AlertCircle } from "@tamagui/lucide-icons";
 import { router } from "expo-router";
-import { adminGetDamageReports, type DamageReport } from "@/components/adminApi";
+import { Alert } from "react-native";
+import { adminGetDamageReports, adminUpdateDamageReportStatus, type DamageReport } from "@/components/adminApi";
 import { useSyncStatus } from "@/hooks";
 
 const STATUS_LABELS: Record<string, string> = {
@@ -30,6 +31,33 @@ export default function AdminReportsScreen() {
   const [reports, setReports] = useState<DamageReport[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [updatingId, setUpdatingId] = useState<number | null>(null);
+
+  const handleStatusChange = useCallback(async (reportId: number, newStatus: 'approved' | 'rejected') => {
+    const label = newStatus === 'approved' ? 'Jóváhagyás' : 'Elutasítás';
+    Alert.alert(
+      `${label} megerősítése`,
+      `Biztosan ${newStatus === 'approved' ? 'jóváhagyod' : 'elutasítod'} ezt a hibajelentést?`,
+      [
+        { text: 'Mégse', style: 'cancel' },
+        {
+          text: label,
+          style: newStatus === 'rejected' ? 'destructive' : 'default',
+          onPress: async () => {
+            setUpdatingId(reportId);
+            try {
+              await adminUpdateDamageReportStatus(reportId, newStatus);
+              await loadReports();
+            } catch (err) {
+              Alert.alert('Hiba', err instanceof Error ? err.message : 'Nem sikerült frissíteni a státuszt.');
+            } finally {
+              setUpdatingId(null);
+            }
+          },
+        },
+      ]
+    );
+  }, [loadReports]);
 
   const loadReports = useCallback(async () => {
     setLoading(true);
@@ -167,6 +195,30 @@ export default function AdminReportsScreen() {
                     )}
                   </YStack>
                 </XStack>
+                {report.status === 'pending' && (
+                  <XStack gap="$2" marginTop="$2">
+                    <Button
+                      size="$3"
+                      theme="green"
+                      flex={1}
+                      icon={CheckCircle2}
+                      disabled={updatingId === report.id}
+                      onPress={() => handleStatusChange(report.id, 'approved')}
+                    >
+                      <Text fontSize={12} fontWeight="600">Jóváhagyás</Text>
+                    </Button>
+                    <Button
+                      size="$3"
+                      theme="red"
+                      flex={1}
+                      icon={XCircle}
+                      disabled={updatingId === report.id}
+                      onPress={() => handleStatusChange(report.id, 'rejected')}
+                    >
+                      <Text fontSize={12} fontWeight="600">Elutasítás</Text>
+                    </Button>
+                  </XStack>
+                )}
               </Card>
             ))}
           </YStack>

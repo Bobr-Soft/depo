@@ -173,6 +173,7 @@ export default function LocationDetailsScreen() {
                           alignSelf="flex-start"
                           paddingHorizontal="$1.5"
                           borderRadius="$1"
+                          numberOfLines={1}
                         >
                           {item.barcode}
                         </Text>

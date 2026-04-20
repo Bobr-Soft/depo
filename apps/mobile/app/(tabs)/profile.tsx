@@ -1,11 +1,13 @@
 import { ScrollView, Text, YStack, Button, Avatar, Card, XStack, CircleChevronDown, CircleChevronUp, Separator } from '@repo/ui';
 import { useColorScheme, useSyncStatus } from '@/hooks';
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useCallback } from 'react';
 import { Linking } from 'react-native';
+import { useFocusEffect, router } from 'expo-router';
 import { Camera } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
 import loadTasks from '@/components/api';
 import { TaskComplete } from '@/constants/types';
+import { SyncStatusBanner } from '@/components/SyncStatusBanner';
 import {
   buildApiUrl,
   getApiUrl,
@@ -20,10 +22,9 @@ import {
 } from '@/services/secureStorage';
 import { cleanupSyncService, forceRefresh } from '@/services/sync';
 import { logout } from '@/services/auth';
-import { router } from 'expo-router';
 import { Colors } from '@/constants';
 import { APP_VERSION } from '@/constants/config';
-import { Shield, Settings, LifeBuoy, LogOut, Smartphone, Volume2, Vibrate, Activity, HardDrive } from '@tamagui/lucide-icons';
+import { Shield, LifeBuoy, LogOut, Smartphone, Volume2, Vibrate, Activity, HardDrive } from '@tamagui/lucide-icons';
 
 const GITHUB_REPO_URL = 'https://github.com/Bobr-Soft/depo';
 const GITHUB_DISCUSSIONS_URL = `${GITHUB_REPO_URL}/discussions`;
@@ -79,8 +80,8 @@ export default function ProfileScreen() {
   const [scanSoundEnabled, setScanSoundState] = useState(true);
   const [hapticFeedbackEnabled, setHapticFeedbackState] = useState(true);
 
-  // --- INITIAL LOAD ---
-  useEffect(() => {
+  // --- REFRESH ON FOCUS ---
+  useFocusEffect(useCallback(() => {
     async function loadProfile() {
       const [storedEmail, storedRole, storedApiUrl, storedPhotoUrl, savedScanSound, savedHaptic, permissions, loadedTasks] = await Promise.all([
         getUserEmail(), getUserRole(), getApiUrl(), getUserPhotoUrl(),
@@ -98,7 +99,7 @@ export default function ProfileScreen() {
       setTasks(loadedTasks);
     }
     loadProfile();
-  }, []);
+  }, []));
 
   useEffect(() => {
     setImageLoadFailed(false);
@@ -244,6 +245,9 @@ export default function ProfileScreen() {
         </YStack>
       </Card>
 
+      {/* SYNC STATUS BANNER */}
+      <SyncStatusBanner />
+
       {/* KPI WIDGET */}
       <YStack gap="$2">
         <Text fontSize={14} fontWeight="600" color={colors.textSecondary} marginLeft="$2" textTransform="uppercase">Napi teljesítmény</Text>
@@ -272,7 +276,7 @@ export default function ProfileScreen() {
               Rendszerállapot
             </Button>
             <Button size="$3" theme="gray" variant="outlined" onPress={() => router.push('/picking')}>Feladat kiosztás</Button>
-            <Button size="$3" theme="gray" variant="outlined" onPress={() => router.push('/inbound')}>Felhasználók</Button>
+            <Button size="$3" theme="gray" variant="outlined" onPress={() => router.push('/admin/users')}>Felhasználók</Button>
           </ScrollView>
         </YStack>
       )}
@@ -335,6 +339,14 @@ export default function ProfileScreen() {
                 {syncStatus.isOnline ? 'Online' : `Offline (${syncStatus.pendingOperations} függő)`}
               </Text>
             </XStack>
+            {(syncStatus.pendingOperations > 0 || syncStatus.deadLetterOperations > 0) && (
+              <XStack justifyContent="space-between" alignItems="center">
+                <Text fontSize={13} color={colors.textSecondary}>Várakozó / Sikertelen</Text>
+                <Text fontSize={13} fontWeight="600" color={syncStatus.deadLetterOperations > 0 ? '$red10' : '$orange10'}>
+                  {syncStatus.pendingOperations} függő / {syncStatus.deadLetterOperations} sikertelen
+                </Text>
+              </XStack>
+            )}
             <XStack justifyContent="space-between" alignItems="center">
               <Text fontSize={13} color={colors.textSecondary}>Szinkronizálva</Text>
               <Text fontSize={13} color={colors.text}>{formattedLastSync}</Text>

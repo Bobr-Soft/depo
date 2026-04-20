@@ -7,6 +7,7 @@ import { router } from "expo-router";
 import { adminGetTasks, adminUpdateTask } from "@/components/adminApi";
 import { useSyncStatus } from "@/hooks";
 import type { TaskComplete } from "@/constants/types";
+import { CARD } from "@/constants";
 
 const STATUS_LABELS: Record<string, string> = {
   pending: "Várakozik",
@@ -135,10 +136,10 @@ export default function SupervisorTasksScreen() {
               <Card
                 key={task.id}
                 backgroundColor="$color2"
-                borderRadius="$4"
-                padding="$4"
+                borderRadius={CARD.radius}
+                padding={CARD.padding}
                 borderWidth={1}
-                borderColor={task.priority === 1 ? "$red5" : "$color4"}
+                borderColor={task.priority === 1 ? "$red5" : CARD.border}
               >
                 <XStack alignItems="center" gap="$3">
                   <YStack width={40} height={40} backgroundColor="$blue5" borderRadius="$3" alignItems="center" justifyContent="center">

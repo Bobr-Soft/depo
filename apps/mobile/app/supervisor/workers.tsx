@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ScrollView, YStack, XStack, Button, Text, H2, Card, Separator, Spinner } from "@repo/ui";
-import { ArrowLeft, Users, RefreshCw, AlertCircle, AlertTriangle } from "@tamagui/lucide-icons";
+import { ArrowLeft, Users, RefreshCw, AlertCircle, AlertTriangle, Eye } from "@tamagui/lucide-icons";
 import { router } from "expo-router";
 import { adminGetUsers, adminGetTasks, type AdminUserResponse } from "@/components/adminApi";
 import { useSyncStatus } from "@/hooks";
 import type { TaskComplete } from "@/constants/types";
+import { CARD } from "@/constants";
 
 const ROLE_LABELS: Record<string, string> = {
   admin: "Admin",
@@ -123,10 +124,10 @@ export default function SupervisorWorkersScreen() {
                 <Card
                   key={user.id}
                   backgroundColor="$color2"
-                  borderRadius="$4"
-                  padding="$4"
+                  borderRadius={CARD.radius}
+                  padding={CARD.padding}
                   borderWidth={1}
-                  borderColor={!isActive(user) ? "$red5" : "$color4"}
+                  borderColor={!isActive(user) ? "$red5" : CARD.border}
                 >
                   <XStack alignItems="center" gap="$3">
                     <YStack
@@ -160,6 +161,19 @@ export default function SupervisorWorkersScreen() {
                       )}
                     </YStack>
                   </XStack>
+                  {activeTask && (
+                    <XStack gap="$2" marginTop="$2">
+                      <Button
+                        size="$3"
+                        theme="blue"
+                        flex={1}
+                        icon={Eye}
+                        onPress={() => router.push({ pathname: "/picking/[id]", params: { id: activeTask.id } })}
+                      >
+                        <Text fontSize={12} fontWeight="600">Feladat megtekintése</Text>
+                      </Button>
+                    </XStack>
+                  )}
                 </Card>
               );
             })}

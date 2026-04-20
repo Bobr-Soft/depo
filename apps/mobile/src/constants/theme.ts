@@ -123,6 +123,21 @@ export const BorderRadius = {
  * - md: Medium shadow for cards and buttons
  * - lg: Large shadow for modals and dialogs
  */
+/**
+ * Card Layout Constants
+ *
+ * Shared padding, border radius, gap, and border color for task/item cards.
+ * Use these tokens to keep all card layouts consistent.
+ *
+ * USAGE: <Card padding={CARD.padding} borderRadius={CARD.radius} gap={CARD.gap} borderColor={CARD.border}>
+ */
+export const CARD = {
+  padding: "$3",
+  radius: "$4",
+  gap: "$2",
+  border: "$color4",
+} as const;
+
 export const Shadows = {
   sm: {
     shadowColor: '#101418',

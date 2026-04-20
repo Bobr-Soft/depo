@@ -37,6 +37,7 @@ export default function AdminTasksScreen() {
   const [tasks, setTasks] = useState<TaskComplete[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [updatingTaskId, setUpdatingTaskId] = useState<number | null>(null);
 
   const loadTasks = useCallback(async () => {
     setLoading(true);
@@ -132,11 +133,14 @@ export default function AdminTasksScreen() {
   };
 
   const doPriorityUpdate = async (task: TaskComplete, priority: number) => {
+    setUpdatingTaskId(task.id);
     try {
       await adminUpdateTask(task.id, { priority });
       setTasks(prev => prev.map(t => t.id === task.id ? { ...t, priority } : t));
     } catch (err) {
       Alert.alert("Hiba", err instanceof Error ? err.message : "Nem sikerült frissíteni.");
+    } finally {
+      setUpdatingTaskId(null);
     }
   };
 
@@ -183,10 +187,13 @@ export default function AdminTasksScreen() {
             <Text fontSize={14} color="$red10" textAlign="center">{error}</Text>
             <Button size="$3" onPress={loadTasks}>Újrapróbálkozás</Button>
           </YStack>
+        ) : tasks.length === 0 ? (
+          <YStack flex={1} gap="$4" justifyContent="center" alignItems="center" paddingVertical="$10">
+            <ClipboardList size={48} color="$color8" />
+            <Text fontSize={16} color="$color10" textAlign="center">Nincsenek feladatok</Text>
+          </YStack>
         ) : (
           <YStack gap="$3">
-            <Text fontSize={14} fontWeight="600" color="$color11" marginBottom="$1">{tasks.length} feladat</Text>
-
             {tasks.map((task) => (
               <Card
                 key={task.id}
@@ -218,10 +225,10 @@ export default function AdminTasksScreen() {
                     <Button
                       size="$2"
                       theme="gray"
+                      disabled={updatingTaskId === task.id || !syncStatus.isOnline}
                       onPress={() => handleChangePriority(task)}
-                      disabled={!syncStatus.isOnline}
                     >
-                      <Text>P{task.priority}</Text>
+                      {updatingTaskId === task.id ? 'P...' : `P${task.priority}`}
                     </Button>
                     <Button
                       size="$2"
