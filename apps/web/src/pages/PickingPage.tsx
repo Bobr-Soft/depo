@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Box,
@@ -25,10 +25,14 @@ import {
   TableCell,
   TableHead,
   TableRow,
+  TableSortLabel,
   TextField,
   ToggleButton,
   ToggleButtonGroup,
+  Tooltip,
   Typography,
+  useMediaQuery,
+  useTheme,
 } from '@mui/material';
 import {
   AlertTriangle,
@@ -36,15 +40,19 @@ import {
   Clock,
   Edit2,
   ListTodo,
+  MapPin,
   Minus,
   Package,
   Plus,
+  RefreshCw,
   Search,
   Shield,
   Trash2,
+  Truck,
   User,
   UserPlus,
   Timer,
+  XCircle,
 } from 'lucide-react';
 import { api } from '../services/api';
 
@@ -91,12 +99,27 @@ type MaterialRequestApiModel = {
 
 type UserApiModel = { id: number; email: string };
 
+type AdminSortField = 'line' | 'status' | 'createdAt';
+
+const PRODUCTION_LINES = [
+  'SMT-01', 'SMT-02', 'SMT-03',
+  'Assembly-A', 'Assembly-B', 'Assembly-C',
+  'ESD-01', 'ESD-02',
+  'QC-01', 'QC-02',
+  'Paint-1', 'Paint-2',
+  'Pack-A', 'Pack-B',
+];
+
+const POLL_INTERVAL_MS = 30_000;
+
 const statusMeta: Record<RequestStatus, { label: string; color: string }> = {
   pending: { label: 'Pending', color: '#f59e0b' },
   picking: { label: 'Picking', color: '#3b82f6' },
   transit: { label: 'In Transit', color: '#8b5cf6' },
   delivered: { label: 'Delivered', color: '#22c55e' },
 };
+
+const STATUS_ORDER: Record<RequestStatus, number> = { pending: 0, picking: 1, transit: 2, delivered: 3 };
 
 const statusCycle: RequestStatus[] = ['pending', 'picking', 'transit', 'delivered'];
 
@@ -120,6 +143,12 @@ const getErrorStatus = (error: unknown): number | undefined => {
   return candidate.response?.status;
 };
 
+const stockColor = (stock: number) => {
+  if (stock <= 0) return '#ef5350';
+  if (stock < 10) return '#f59e0b';
+  return '#22c55e';
+};
+
 // Reusable styling for KPI cards matching the OverviewPage
 const kpiCardSx = {
   p: 2.5,
@@ -128,7 +157,22 @@ const kpiCardSx = {
   '&:hover': {
     transform: 'translateY(-2px)',
     boxShadow: 4,
-  }
+  },
+};
+
+const itemCardHoverSx = {
+  transition: 'transform 0.15s, box-shadow 0.15s',
+  '&:hover': {
+    transform: 'translateY(-1px)',
+    boxShadow: 2,
+  },
+};
+
+const pulseKeyframes = {
+  '@keyframes pulse': {
+    '0%, 100%': { opacity: 1 },
+    '50%': { opacity: 0.4 },
+  },
 };
 
 // ============================================================================
@@ -136,6 +180,9 @@ const kpiCardSx = {
 // ============================================================================
 
 export default function PickingPage({ userRole }: { userRole?: string }) {
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+
   // --- UI & Mode State ---
   const [roleMode, setRoleMode] = useState<RoleMode>(String(userRole || '').trim().toLowerCase() === 'admin' ? 'ADMIN' : 'OPERATOR');
   const [line, setLine] = useState('SMT-01');
@@ -167,6 +214,18 @@ export default function PickingPage({ userRole }: { userRole?: string }) {
   const [editRequest, setEditRequest] = useState<MaterialRequestDetail | null>(null);
   const [catalogFormOpen, setCatalogFormOpen] = useState(false);
   const [catalogForm, setCatalogForm] = useState<CatalogForm>({ id: null, name: '', code: '', location: '', stock: '0' });
+  const [clearCartConfirmOpen, setClearCartConfirmOpen] = useState(false);
+
+  // --- Live tracking state ---
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // --- Admin filter/sort state ---
+  const [adminSearch, setAdminSearch] = useState('');
+  const [adminFilterStatus, setAdminFilterStatus] = useState<RequestStatus | 'all'>('all');
+  const [adminFilterPriority, setAdminFilterPriority] = useState<Priority | 'all'>('all');
+  const [adminSortField, setAdminSortField] = useState<AdminSortField>('createdAt');
+  const [adminSortDir, setAdminSortDir] = useState<'asc' | 'desc'>('desc');
 
   useEffect(() => { setRoleMode(String(userRole || '').trim().toLowerCase() === 'admin' ? 'ADMIN' : 'OPERATOR'); }, [userRole]);
 
@@ -188,6 +247,45 @@ export default function PickingPage({ userRole }: { userRole?: string }) {
       .map(([id, qty]) => ({ item: catalog.find((c) => c.id === Number(id))!, quantity: qty }))
       .filter((v) => v.item);
   }, [cart, catalog]);
+
+  const cartSummary = useMemo(() => {
+    const totalUnits = cartItems.reduce((sum, c) => sum + c.quantity, 0);
+    return { itemCount: cartItems.length, totalUnits };
+  }, [cartItems]);
+
+  const sortedOperatorRequests = useMemo(() => {
+    return [...operatorRequests].sort((a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status]);
+  }, [operatorRequests]);
+
+  const filteredAdminRequests = useMemo(() => {
+    const q = adminSearch.trim().toLowerCase();
+    let result = adminRequests.filter((r) => {
+      if (adminFilterStatus !== 'all' && r.status !== adminFilterStatus) return false;
+      if (adminFilterPriority !== 'all' && r.priority !== adminFilterPriority) return false;
+      if (q && !r.name.toLowerCase().includes(q) && !r.line.toLowerCase().includes(q) && !r.id.toLowerCase().includes(q)) return false;
+      return true;
+    });
+
+    result = [...result].sort((a, b) => {
+      let cmp = 0;
+      if (adminSortField === 'line') cmp = a.line.localeCompare(b.line);
+      else if (adminSortField === 'status') cmp = STATUS_ORDER[a.status] - STATUS_ORDER[b.status];
+      else cmp = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      return adminSortDir === 'asc' ? cmp : -cmp;
+    });
+
+    return result;
+  }, [adminRequests, adminSearch, adminFilterStatus, adminFilterPriority, adminSortField, adminSortDir]);
+
+  const estimatedDeadline = useMemo(() => {
+    const date = new Date();
+    if (priority === 'urgent') {
+      date.setHours(date.getHours() + 1);
+    } else {
+      date.setDate(date.getDate() + 2);
+    }
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + (priority === 'normal' ? ` (${date.toLocaleDateString([], { month: 'short', day: 'numeric' })})` : '');
+  }, [priority]);
 
   // --- Fetchers ---
   const fetchCatalog = useCallback(async () => {
@@ -217,6 +315,7 @@ export default function PickingPage({ userRole }: { userRole?: string }) {
         deadline: r.deadline,
         priority: r.priority,
       })));
+      setLastUpdated(new Date());
       setErrorMessage(null);
     } catch (err: unknown) { setErrorMessage(resolveError(getErrorStatus(err), 'Failed to load line requests.')); }
     finally { setIsRequestsLoading(false); }
@@ -261,6 +360,15 @@ export default function PickingPage({ userRole }: { userRole?: string }) {
     }
     fetchOperatorRequests();
   }, [roleMode, fetchAdminRequests, fetchOperatorRequests]);
+
+  // --- Auto-poll operator requests every 30s ---
+  useEffect(() => {
+    if (pollRef.current) clearInterval(pollRef.current);
+    if (roleMode === 'OPERATOR') {
+      pollRef.current = setInterval(() => { fetchOperatorRequests(); }, POLL_INTERVAL_MS);
+    }
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, [roleMode, fetchOperatorRequests]);
 
   const refreshRequests = () => roleMode === 'ADMIN' ? fetchAdminRequests() : fetchOperatorRequests();
 
@@ -362,6 +470,30 @@ export default function PickingPage({ userRole }: { userRole?: string }) {
     catch (err: unknown) { setErrorMessage(resolveError(getErrorStatus(err), 'Item delete failed.')); }
   };
 
+  const handleAdminSort = (field: AdminSortField) => {
+    if (adminSortField === field) {
+      setAdminSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setAdminSortField(field);
+      setAdminSortDir('asc');
+    }
+  };
+
+  const renderStatusIndicator = (status: RequestStatus) => {
+    const meta = statusMeta[status];
+    if (status === 'delivered') return <CheckCircle size={14} color={meta.color} />;
+    if (status === 'transit') return <Truck size={14} color={meta.color} />;
+    if (status === 'picking') {
+      return (
+        <Box sx={{
+          width: 10, height: 10, borderRadius: '50%', bgcolor: meta.color,
+          animation: 'pulse 1.5s ease-in-out infinite', ...pulseKeyframes,
+        }} />
+      );
+    }
+    return <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: meta.color }} />;
+  };
+
   // ============================================================================
   // RENDER: OPERATOR VIEW (Floor View)
   // ============================================================================
@@ -369,48 +501,89 @@ export default function PickingPage({ userRole }: { userRole?: string }) {
     <Box sx={{ display: 'grid', gap: 3, gridTemplateColumns: { xs: '1fr', lg: '1.2fr 1fr' }, alignItems: 'start' }}>
 
       {/* LEFT: Catalog */}
-      <Paper elevation={2} sx={{ p: 3, borderRadius: 2, display: 'flex', flexDirection: 'column', height: 'calc(100vh - 160px)' }}>
-        <Typography variant="h6" fontWeight={600} mb={2}>Material Catalog</Typography>
+      <Paper elevation={2} sx={{ p: 3, borderRadius: 2, display: 'flex', flexDirection: 'column', maxHeight: { xs: '70vh', lg: '75vh' }, overflow: 'hidden' }}>
+        <Typography variant="h6" fontWeight={600} mb={2} sx={{ flexShrink: 0 }}>Material Catalog</Typography>
 
         <TextField
           fullWidth
           size="small"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search catalog..."
+          placeholder="Search by name, code, or barcode..."
           InputProps={{ startAdornment: <InputAdornment position="start"><Search size={18} /></InputAdornment> }}
-          sx={{ mb: 2 }}
+          sx={{ mb: 1, flexShrink: 0 }}
         />
 
-        <Stack direction="row" spacing={1} mb={2} sx={{ overflowX: 'auto', pb: 1, '&::-webkit-scrollbar': { height: 6 }, '&::-webkit-scrollbar-thumb': { bgcolor: 'divider', borderRadius: 3 } }}>
-          {categories.map((cat) => (
-            <Chip
-              key={cat}
-              label={cat}
-              onClick={() => setSelectedCategory(cat)}
-              color={selectedCategory === cat ? 'primary' : 'default'}
-              variant={selectedCategory === cat ? 'filled' : 'outlined'}
-            />
-          ))}
-        </Stack>
+        <Typography variant="caption" color="text.secondary" mb={1.5} sx={{ flexShrink: 0 }}>
+          Showing {filteredCatalog.length} of {catalog.length} items
+        </Typography>
 
-        <Stack spacing={1.5} sx={{ overflowY: 'auto', flex: 1, pr: 1 }}>
+        <Box sx={{ flexShrink: 0, overflowX: 'auto', mb: 2, pb: 1, '&::-webkit-scrollbar': { height: 6 }, '&::-webkit-scrollbar-thumb': { bgcolor: 'divider', borderRadius: 3 } }}>
+          <Stack direction="row" spacing={1} sx={{ width: 'max-content' }}>
+            {categories.map((cat) => (
+              <Chip
+                key={cat}
+                label={cat}
+                onClick={() => setSelectedCategory(cat)}
+                color={selectedCategory === cat ? 'primary' : 'default'}
+                variant={selectedCategory === cat ? 'filled' : 'outlined'}
+                size="small"
+              />
+            ))}
+          </Stack>
+        </Box>
+
+
+
+        <Stack spacing={1.5} sx={{ overflowY: 'auto', flex: 1, minHeight: 0, pr: 1 }}>
           {isCatalogLoading ? <CircularProgress sx={{ alignSelf: 'center', mt: 4 }} /> :
+            filteredCatalog.length === 0 ? (
+              <Stack alignItems="center" spacing={1} sx={{ mt: 6 }}>
+                <Search size={40} color="#9e9e9e" />
+                <Typography color="text.secondary">No items match your search</Typography>
+                <Button size="small" onClick={() => { setSearch(''); setSelectedCategory('All'); }}>Clear filters</Button>
+              </Stack>
+            ) :
             filteredCatalog.map((item) => {
               const qty = cart[item.id] || 0;
               return (
-                <Paper key={item.id} variant="outlined" sx={{ p: 1.5, borderColor: 'divider' }}>
+                <Paper key={item.id} variant="outlined" sx={{
+                  p: 1.5, borderColor: 'divider', borderLeft: '3px solid', borderLeftColor: stockColor(item.stock),
+                  ...itemCardHoverSx,
+                }}>
                   <Stack direction="row" justifyContent="space-between" alignItems="center">
-                    <Box>
-                      <Typography fontWeight={600} color="text.primary">{item.name}</Typography>
-                      <Typography variant="body2" color="text.secondary">
-                        {item.code} • Available: <Typography component="span" color="success.main" fontWeight="bold">{item.stock}</Typography>
-                      </Typography>
+                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                      <Stack direction="row" spacing={1} alignItems="center">
+                        <Typography fontWeight={600} color="text.primary" noWrap>{item.name}</Typography>
+                        <Chip label={item.category} size="small" variant="outlined" sx={{ fontSize: '0.65rem', height: 20 }} />
+                      </Stack>
+                      <Stack direction="row" spacing={1.5} alignItems="center" mt={0.5}>
+                        <Typography variant="body2" color="text.secondary">{item.code}</Typography>
+                        <Chip
+                          label={item.stock === 0 ? 'Out of stock' : `${item.stock} avail.`}
+                          size="small"
+                          sx={{ fontSize: '0.65rem', height: 20, bgcolor: `${stockColor(item.stock)}18`, color: stockColor(item.stock), fontWeight: 'bold' }}
+                        />
+                        {item.location && (
+                          <Typography variant="caption" color="text.secondary" display="flex" alignItems="center" gap={0.3}>
+                            <MapPin size={10} /> {item.location}
+                          </Typography>
+                        )}
+                      </Stack>
                     </Box>
-                    <Stack direction="row" alignItems="center" spacing={1}>
-                      <IconButton onClick={() => setQuantity(item.id, Math.max(0, qty - 1))} sx={{ bgcolor: 'action.hover', width: 36, height: 36 }}><Minus size={16} /></IconButton>
-                      <Typography sx={{ minWidth: 24, textAlign: 'center', fontWeight: 'bold' }}>{qty}</Typography>
-                      <IconButton onClick={() => setQuantity(item.id, qty + 1)} sx={{ bgcolor: 'action.hover', width: 36, height: 36 }}><Plus size={16} /></IconButton>
+                    <Stack direction="row" alignItems="center" spacing={0.5}>
+                      <IconButton onClick={() => setQuantity(item.id, Math.max(0, qty - 1))} size="small" sx={{ bgcolor: 'action.hover', width: 32, height: 32 }}><Minus size={14} /></IconButton>
+                      <TextField
+                        size="small"
+                        value={qty}
+                        onChange={(e) => {
+                          const val = Number.parseInt(e.target.value, 10);
+                          setQuantity(item.id, Number.isNaN(val) ? 0 : Math.max(0, val));
+                        }}
+                        inputProps={{ style: { textAlign: 'center', width: 32, padding: '4px 0' } }}
+                        sx={{ '& .MuiOutlinedInput-root': { height: 32 } }}
+                      />
+                      <IconButton onClick={() => setQuantity(item.id, qty + 1)} size="small" sx={{ bgcolor: 'action.hover', width: 32, height: 32 }}><Plus size={14} /></IconButton>
                     </Stack>
                   </Stack>
                 </Paper>
@@ -421,34 +594,61 @@ export default function PickingPage({ userRole }: { userRole?: string }) {
       </Paper>
 
       {/* RIGHT: Cart & Live Tracking */}
-      <Stack spacing={3} sx={{ height: 'calc(100vh - 160px)' }}>
+      <Stack spacing={3} sx={{ maxHeight: { xs: 'none', lg: '75vh' } }}>
 
         {/* CART */}
         <Paper elevation={2} sx={{ p: 3, borderRadius: 2, flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-          <Typography variant="h6" fontWeight={600} mb={2}>Current Request</Typography>
+          <Stack direction="row" justifyContent="space-between" alignItems="center" mb={2}>
+            <Typography variant="h6" fontWeight={600}>Current Request</Typography>
+            {cartItems.length > 0 && (
+              <Button size="small" color="error" startIcon={<XCircle size={14} />} onClick={() => setClearCartConfirmOpen(true)} sx={{ textTransform: 'none' }}>
+                Clear
+              </Button>
+            )}
+          </Stack>
           <Stack spacing={1.5} sx={{ flex: 1, overflowY: 'auto', mb: 2, pr: 1 }}>
             {cartItems.length === 0 ? <Typography color="text.secondary" textAlign="center" mt={4}>No items selected</Typography> :
               cartItems.map(({ item, quantity }) => (
-                <Paper key={item.id} variant="outlined" sx={{ p: 1.5, borderColor: 'divider' }}>
+                <Paper key={item.id} variant="outlined" sx={{ p: 1.5, borderColor: 'divider', ...itemCardHoverSx }}>
                   <Stack direction="row" justifyContent="space-between" alignItems="center">
-                    <Box>
-                      <Typography fontWeight={600} color="text.primary">{item.name}</Typography>
-                      <Typography variant="body2" color="text.secondary">
-                        Req: <Typography component="span" color="text.primary" fontWeight="bold">{quantity}</Typography>
-                      </Typography>
+                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                      <Typography fontWeight={600} color="text.primary" noWrap>{item.name}</Typography>
+                      <Stack direction="row" spacing={1} alignItems="center" mt={0.3}>
+                        <Typography variant="body2" color="text.secondary">Qty:</Typography>
+                        <TextField
+                          size="small"
+                          value={quantity}
+                          onChange={(e) => {
+                            const val = Number.parseInt(e.target.value, 10);
+                            setQuantity(item.id, Number.isNaN(val) ? 0 : Math.max(0, val));
+                          }}
+                          inputProps={{ style: { textAlign: 'center', width: 36, padding: '2px 0' } }}
+                          sx={{ '& .MuiOutlinedInput-root': { height: 28 } }}
+                        />
+                      </Stack>
                       {quantity > item.stock && <Typography variant="caption" color="warning.main" display="flex" alignItems="center" gap={0.5} mt={0.5}><AlertTriangle size={12} /> Partial fill expected</Typography>}
                     </Box>
-                    <IconButton onClick={() => setQuantity(item.id, 0)} color="error"><Trash2 size={18} /></IconButton>
+                    <IconButton onClick={() => setQuantity(item.id, 0)} color="error" size="small"><Trash2 size={16} /></IconButton>
                   </Stack>
                 </Paper>
               ))
             }
           </Stack>
+
+          {cartItems.length > 0 && (
+            <Typography variant="body2" color="text.secondary" textAlign="right" mb={1}>
+              {cartSummary.itemCount} item{cartSummary.itemCount !== 1 ? 's' : ''}, {cartSummary.totalUnits} total units
+            </Typography>
+          )}
+
           <Divider sx={{ mb: 2 }} />
-          <ToggleButtonGroup exclusive fullWidth size="small" value={priority} onChange={(_, v) => v && setPriority(v)} sx={{ mb: 2 }}>
+          <ToggleButtonGroup exclusive fullWidth size="small" value={priority} onChange={(_, v) => v && setPriority(v)} sx={{ mb: 1 }}>
             <ToggleButton value="normal">Normal</ToggleButton>
             <ToggleButton value="urgent" color="error">Urgent</ToggleButton>
           </ToggleButtonGroup>
+          <Typography variant="caption" color="text.secondary" textAlign="center" mb={2} display="block">
+            Estimated due: ~{estimatedDeadline}
+          </Typography>
           <Button fullWidth variant="contained" disabled={!cartItems.length || isSubmitting} onClick={handleSubmitRequest} sx={{ py: 1.5, fontWeight: 'bold', fontSize: '1.05rem' }}>
             {isSubmitting ? 'Submitting...' : 'Submit Request'}
           </Button>
@@ -456,27 +656,43 @@ export default function PickingPage({ userRole }: { userRole?: string }) {
 
         {/* LIVE TRACKING */}
         <Paper elevation={2} sx={{ p: 3, borderRadius: 2, flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-          <Typography variant="h6" fontWeight={600} mb={2}>Live Tracking</Typography>
+          <Stack direction="row" justifyContent="space-between" alignItems="center" mb={2}>
+            <Typography variant="h6" fontWeight={600}>Live Tracking</Typography>
+            <Stack direction="row" spacing={1} alignItems="center">
+              {lastUpdated && (
+                <Typography variant="caption" color="text.secondary">
+                  {lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                </Typography>
+              )}
+              <IconButton size="small" onClick={() => fetchOperatorRequests()} sx={{ bgcolor: 'action.hover' }}>
+                <RefreshCw size={16} />
+              </IconButton>
+            </Stack>
+          </Stack>
           <Stack spacing={1.5} sx={{ overflowY: 'auto', flex: 1, pr: 1 }}>
             {isRequestsLoading ? <CircularProgress sx={{ alignSelf: 'center', mt: 4 }} /> :
-              operatorRequests.length === 0 ? <Typography color="text.secondary" textAlign="center" mt={4}>No active requests for {line}</Typography> :
-              operatorRequests.map((req) => {
+              sortedOperatorRequests.length === 0 ? <Typography color="text.secondary" textAlign="center" mt={4}>No active requests for {line}</Typography> :
+              sortedOperatorRequests.map((req) => {
                 const meta = statusMeta[req.status];
                 return (
-                  <Paper key={req.id} variant="outlined" sx={{ p: 1.5, borderColor: 'divider' }}>
+                  <Paper key={req.id} variant="outlined" sx={{
+                    p: 1.5, borderColor: 'divider',
+                    borderLeft: '3px solid', borderLeftColor: meta.color,
+                    ...itemCardHoverSx,
+                  }}>
                     <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
                       <Box>
                         <Typography fontWeight={700} color="text.primary">{req.name}</Typography>
                         <Typography variant="body2" color="text.secondary">{req.totalItems} items</Typography>
 
                         <Stack direction="row" spacing={0.8} alignItems="center" mt={1}>
-                          {req.status === 'delivered' ? <CheckCircle size={14} color={meta.color} /> : <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: meta.color }} />}
+                          {renderStatusIndicator(req.status)}
                           <Typography variant="body2" sx={{ color: meta.color, fontWeight: 700 }}>{meta.label}</Typography>
                         </Stack>
 
                         {req.deadline && req.status !== 'delivered' && (
                           <Typography variant="caption" sx={{ color: req.priority === 'urgent' ? 'error.main' : 'text.secondary', display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.5 }}>
-                            <Timer size={12} /> Due: {new Date(req.deadline).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                            <Timer size={12} /> Due: {new Date(req.deadline).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                           </Typography>
                         )}
                       </Box>
@@ -539,22 +755,60 @@ export default function PickingPage({ userRole }: { userRole?: string }) {
 
       {/* REQUESTS TABLE */}
       <Paper elevation={2} sx={{ p: 3, borderRadius: 2, overflowX: 'auto' }}>
-        <Typography variant="h6" fontWeight={600} mb={2}>Active Material Requests</Typography>
+        <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" alignItems={{ xs: 'stretch', md: 'center' }} spacing={2} mb={2}>
+          <Typography variant="h6" fontWeight={600}>Active Material Requests</Typography>
+          <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap">
+            <TextField
+              size="small"
+              placeholder="Search requests..."
+              value={adminSearch}
+              onChange={(e) => setAdminSearch(e.target.value)}
+              InputProps={{ startAdornment: <InputAdornment position="start"><Search size={16} /></InputAdornment> }}
+              sx={{ minWidth: 180 }}
+            />
+            <FormControl size="small" sx={{ minWidth: 120 }}>
+              <InputLabel>Status</InputLabel>
+              <Select value={adminFilterStatus} label="Status" onChange={(e) => setAdminFilterStatus(e.target.value as RequestStatus | 'all')}>
+                <MenuItem value="all">All</MenuItem>
+                {statusCycle.map((s) => <MenuItem key={s} value={s}>{statusMeta[s].label}</MenuItem>)}
+              </Select>
+            </FormControl>
+            <FormControl size="small" sx={{ minWidth: 110 }}>
+              <InputLabel>Priority</InputLabel>
+              <Select value={adminFilterPriority} label="Priority" onChange={(e) => setAdminFilterPriority(e.target.value as Priority | 'all')}>
+                <MenuItem value="all">All</MenuItem>
+                <MenuItem value="normal">Normal</MenuItem>
+                <MenuItem value="urgent">Urgent</MenuItem>
+              </Select>
+            </FormControl>
+            <Tooltip title="Refresh data">
+              <IconButton size="small" onClick={() => fetchAdminRequests()} sx={{ bgcolor: 'action.hover' }}>
+                <RefreshCw size={18} />
+              </IconButton>
+            </Tooltip>
+          </Stack>
+        </Stack>
         {isRequestsLoading ? <Box sx={{ py: 4, display: 'flex', justifyContent: 'center' }}><CircularProgress /></Box> : (
           <Table size="small" sx={{ minWidth: 800 }}>
             <TableHead>
               <TableRow>
                 <TableCell sx={{ fontWeight: 'bold', color: 'text.secondary' }}>Request</TableCell>
-                <TableCell sx={{ fontWeight: 'bold', color: 'text.secondary' }}>Line</TableCell>
-                <TableCell sx={{ fontWeight: 'bold', color: 'text.secondary' }}>Status</TableCell>
+                <TableCell sx={{ fontWeight: 'bold', color: 'text.secondary' }}>
+                  <TableSortLabel active={adminSortField === 'line'} direction={adminSortField === 'line' ? adminSortDir : 'asc'} onClick={() => handleAdminSort('line')}>Line</TableSortLabel>
+                </TableCell>
+                <TableCell sx={{ fontWeight: 'bold', color: 'text.secondary' }}>
+                  <TableSortLabel active={adminSortField === 'status'} direction={adminSortField === 'status' ? adminSortDir : 'asc'} onClick={() => handleAdminSort('status')}>Status</TableSortLabel>
+                </TableCell>
                 <TableCell sx={{ fontWeight: 'bold', color: 'text.secondary' }}>Progress</TableCell>
                 <TableCell sx={{ fontWeight: 'bold', color: 'text.secondary' }}>Assigned</TableCell>
-                <TableCell sx={{ fontWeight: 'bold', color: 'text.secondary' }}>Time / Deadline</TableCell>
+                <TableCell sx={{ fontWeight: 'bold', color: 'text.secondary' }}>
+                  <TableSortLabel active={adminSortField === 'createdAt'} direction={adminSortField === 'createdAt' ? adminSortDir : 'asc'} onClick={() => handleAdminSort('createdAt')}>Time / Deadline</TableSortLabel>
+                </TableCell>
                 <TableCell align="right" sx={{ fontWeight: 'bold', color: 'text.secondary' }}>Actions</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
-              {adminRequests.map((req) => {
+              {filteredAdminRequests.map((req) => {
                 const progress = req.totalItems > 0 ? (req.pickedItems / req.totalItems) * 100 : 0;
                 return (
                   <TableRow key={req.id} hover>
@@ -568,10 +822,12 @@ export default function PickingPage({ userRole }: { userRole?: string }) {
                         sx={{ bgcolor: `${statusMeta[req.status].color}20`, color: statusMeta[req.status].color, border: `1px solid ${statusMeta[req.status].color}40`, fontWeight: 'bold', cursor: 'pointer' }} />
                     </TableCell>
                     <TableCell sx={{ minWidth: 120 }}>
-                      <Stack direction="row" alignItems="center" spacing={1}>
-                        <Box sx={{ width: '100%' }}><LinearProgress variant="determinate" value={progress} sx={{ height: 6, borderRadius: 3, bgcolor: 'action.hover', '& .MuiLinearProgress-bar': { bgcolor: progress === 100 ? '#22c55e' : '#3b82f6' } }} /></Box>
-                        <Typography variant="caption" color="text.secondary">{req.pickedItems}/{req.totalItems}</Typography>
-                      </Stack>
+                      <Tooltip title={`${req.pickedItems} / ${req.totalItems} items picked`} arrow>
+                        <Stack direction="row" alignItems="center" spacing={1}>
+                          <Box sx={{ width: '100%' }}><LinearProgress variant="determinate" value={progress} sx={{ height: 6, borderRadius: 3, bgcolor: 'action.hover', '& .MuiLinearProgress-bar': { bgcolor: progress === 100 ? '#22c55e' : '#3b82f6' } }} /></Box>
+                          <Typography variant="caption" color="text.secondary">{req.pickedItems}/{req.totalItems}</Typography>
+                        </Stack>
+                      </Tooltip>
                     </TableCell>
                     <TableCell>
                       <Button size="small" startIcon={req.assignedUserId ? <User size={14} /> : <UserPlus size={14} />} onClick={() => { setAssignRequestId(req.id); setAssignUserId(req.assignedUserId ? String(req.assignedUserId) : ''); }}
@@ -580,8 +836,8 @@ export default function PickingPage({ userRole }: { userRole?: string }) {
                       </Button>
                     </TableCell>
                     <TableCell>
-                      <Typography variant="body2" color="text.secondary" display="flex" alignItems="center" gap={0.5}><Clock size={12}/>{new Date(req.createdAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</Typography>
-                      {req.deadline && <Typography variant="caption" color={req.priority === 'urgent' ? 'error.main' : 'text.secondary'} display="flex" alignItems="center" gap={0.5} mt={0.5}><Timer size={12}/>Due: {new Date(req.deadline).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</Typography>}
+                      <Typography variant="body2" color="text.secondary" display="flex" alignItems="center" gap={0.5}><Clock size={12} />{new Date(req.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Typography>
+                      {req.deadline && <Typography variant="caption" color={req.priority === 'urgent' ? 'error.main' : 'text.secondary'} display="flex" alignItems="center" gap={0.5} mt={0.5}><Timer size={12} />Due: {new Date(req.deadline).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Typography>}
                     </TableCell>
                     <TableCell align="right">
                       <Stack direction="row" spacing={0.5} justifyContent="flex-end">
@@ -592,7 +848,7 @@ export default function PickingPage({ userRole }: { userRole?: string }) {
                   </TableRow>
                 );
               })}
-              {adminRequests.length === 0 && <TableRow><TableCell colSpan={7} align="center" sx={{ py: 3, color: 'text.secondary' }}>No active requests</TableCell></TableRow>}
+              {filteredAdminRequests.length === 0 && <TableRow><TableCell colSpan={7} align="center" sx={{ py: 3, color: 'text.secondary' }}>No matching requests</TableCell></TableRow>}
             </TableBody>
           </Table>
         )}
@@ -606,13 +862,17 @@ export default function PickingPage({ userRole }: { userRole?: string }) {
         </Stack>
         <Stack spacing={1.5} sx={{ maxHeight: 400, overflowY: 'auto', pr: 1 }}>
           {catalog.map((item) => (
-            <Paper key={item.id} variant="outlined" sx={{ p: 1.5, borderColor: 'divider', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Paper key={item.id} variant="outlined" sx={{ p: 1.5, borderColor: 'divider', display: 'flex', justifyContent: 'space-between', alignItems: 'center', ...itemCardHoverSx }}>
               <Box>
                 <Typography fontWeight={600}>{item.name}</Typography>
                 <Typography variant="body2" color="text.secondary">{item.code} • Category: {item.category} • Location: {item.location || 'N/A'}</Typography>
               </Box>
               <Stack direction="row" spacing={1} alignItems="center">
-                <Typography variant="body2" fontWeight="bold" mr={2}>Stock: {item.stock}</Typography>
+                <Chip
+                  label={`${item.stock}`}
+                  size="small"
+                  sx={{ fontWeight: 'bold', bgcolor: `${stockColor(item.stock)}18`, color: stockColor(item.stock) }}
+                />
                 <IconButton onClick={() => { setCatalogForm({ id: item.id, name: item.name, code: item.barcode || item.code, location: item.location || '', stock: String(item.stock) }); setCatalogFormOpen(true); }} size="small" color="primary" sx={{ bgcolor: 'action.hover' }}><Edit2 size={16} /></IconButton>
                 <IconButton onClick={() => setDeleteCatalogId(item.id)} size="small" color="error" sx={{ bgcolor: 'action.hover' }}><Trash2 size={16} /></IconButton>
               </Stack>
@@ -637,20 +897,19 @@ export default function PickingPage({ userRole }: { userRole?: string }) {
               <Package color="#667eea" /> DEPO WMS
             </Typography>
 
-            <Stack direction="row" spacing={2} alignItems="center">
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems="center" sx={{ width: { xs: '100%', sm: 'auto' } }}>
               {roleMode === 'OPERATOR' && (
-                <FormControl size="small" sx={{ minWidth: 150 }}>
+                <FormControl size="small" sx={{ minWidth: 180, width: { xs: '100%', sm: 'auto' } }}>
                   <InputLabel>Line</InputLabel>
                   <Select value={line} label="Line" onChange={(e) => setLine(e.target.value)}>
-                    <MenuItem value="SMT-01">Line: SMT-01</MenuItem>
-                    <MenuItem value="Assembly-B">Line: Assembly-B</MenuItem>
+                    {PRODUCTION_LINES.map((l) => <MenuItem key={l} value={l}>{l}</MenuItem>)}
                   </Select>
                 </FormControl>
               )}
 
               <ToggleButtonGroup exclusive size="small" value={roleMode} onChange={(_, v) => v && setRoleMode(v)}>
                 <ToggleButton value="OPERATOR">Floor View</ToggleButton>
-                <ToggleButton value="ADMIN"><Shield size={16} style={{marginRight: 4}}/> Dispatch</ToggleButton>
+                <ToggleButton value="ADMIN"><Shield size={16} style={{ marginRight: 4 }} /> Dispatch</ToggleButton>
               </ToggleButtonGroup>
             </Stack>
           </Stack>
@@ -667,7 +926,7 @@ export default function PickingPage({ userRole }: { userRole?: string }) {
           ===================================================================== */}
 
       {/* Assign User Dialog */}
-      <Dialog open={Boolean(assignRequestId)} onClose={() => setAssignRequestId(null)}>
+      <Dialog open={Boolean(assignRequestId)} onClose={() => setAssignRequestId(null)} fullScreen={isMobile}>
         <DialogTitle>Assign Picker to Task</DialogTitle>
         <DialogContent>
           <FormControl fullWidth sx={{ mt: 1 }}>
@@ -685,13 +944,13 @@ export default function PickingPage({ userRole }: { userRole?: string }) {
       </Dialog>
 
       {/* Edit Request Dialog */}
-      <Dialog open={Boolean(editRequest)} onClose={() => setEditRequest(null)} fullWidth maxWidth="sm">
+      <Dialog open={Boolean(editRequest)} onClose={() => setEditRequest(null)} fullWidth maxWidth="sm" fullScreen={isMobile}>
         <DialogTitle>Edit Request {editRequest?.id}</DialogTitle>
         <DialogContent>
           {editRequest && (
             <Stack spacing={2} sx={{ mt: 1 }}>
-              <TextField fullWidth label="Production Line" value={editRequest.line} onChange={(e) => setEditRequest(prev => prev ? { ...prev, line: e.target.value } : prev)} />
-              <ToggleButtonGroup exclusive value={editRequest.priority} onChange={(_, v) => v && setEditRequest(prev => prev ? { ...prev, priority: v } : prev)} fullWidth>
+              <TextField fullWidth label="Production Line" value={editRequest.line} onChange={(e) => setEditRequest((prev) => prev ? { ...prev, line: e.target.value } : prev)} />
+              <ToggleButtonGroup exclusive value={editRequest.priority} onChange={(_, v) => v && setEditRequest((prev) => prev ? { ...prev, priority: v } : prev)} fullWidth>
                 <ToggleButton value="normal">Normal</ToggleButton>
                 <ToggleButton value="urgent" color="error">Urgent</ToggleButton>
               </ToggleButtonGroup>
@@ -700,9 +959,9 @@ export default function PickingPage({ userRole }: { userRole?: string }) {
                 <Paper key={item.itemId} variant="outlined" sx={{ p: 1.5, borderColor: 'divider', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <Typography>{item.name}</Typography>
                   <Stack direction="row" spacing={1} alignItems="center">
-                    <IconButton size="small" onClick={() => setEditRequest(prev => prev ? { ...prev, items: prev.items.map(i => i.itemId === item.itemId ? { ...i, requestedQuantity: Math.max(1, i.requestedQuantity - 1) } : i) } : prev)} sx={{ bgcolor: 'action.hover' }}><Minus size={14} /></IconButton>
+                    <IconButton size="small" onClick={() => setEditRequest((prev) => prev ? { ...prev, items: prev.items.map((i) => i.itemId === item.itemId ? { ...i, requestedQuantity: Math.max(1, i.requestedQuantity - 1) } : i) } : prev)} sx={{ bgcolor: 'action.hover' }}><Minus size={14} /></IconButton>
                     <Typography sx={{ minWidth: 24, textAlign: 'center', fontWeight: 'bold' }}>{item.requestedQuantity}</Typography>
-                    <IconButton size="small" onClick={() => setEditRequest(prev => prev ? { ...prev, items: prev.items.map(i => i.itemId === item.itemId ? { ...i, requestedQuantity: i.requestedQuantity + 1 } : i) } : prev)} sx={{ bgcolor: 'action.hover' }}><Plus size={14} /></IconButton>
+                    <IconButton size="small" onClick={() => setEditRequest((prev) => prev ? { ...prev, items: prev.items.map((i) => i.itemId === item.itemId ? { ...i, requestedQuantity: i.requestedQuantity + 1 } : i) } : prev)} sx={{ bgcolor: 'action.hover' }}><Plus size={14} /></IconButton>
                   </Stack>
                 </Paper>
               ))}
@@ -716,19 +975,29 @@ export default function PickingPage({ userRole }: { userRole?: string }) {
       </Dialog>
 
       {/* Catalog Form Dialog */}
-      <Dialog open={catalogFormOpen} onClose={() => setCatalogFormOpen(false)} maxWidth="xs" fullWidth>
+      <Dialog open={catalogFormOpen} onClose={() => setCatalogFormOpen(false)} maxWidth="xs" fullWidth fullScreen={isMobile}>
         <DialogTitle>{catalogForm.id ? 'Edit Item' : 'Add New Item'}</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
-            <TextField label="Name" value={catalogForm.name} onChange={(e) => setCatalogForm(prev => ({ ...prev, name: e.target.value }))} />
-            <TextField label="Barcode/Code" value={catalogForm.code} onChange={(e) => setCatalogForm(prev => ({ ...prev, code: e.target.value }))} />
-            <TextField label="Location (Optional)" value={catalogForm.location} onChange={(e) => setCatalogForm(prev => ({ ...prev, location: e.target.value }))} />
-            <TextField label="Stock Quantity" type="number" value={catalogForm.stock} onChange={(e) => setCatalogForm(prev => ({ ...prev, stock: e.target.value }))} />
+            <TextField label="Name" value={catalogForm.name} onChange={(e) => setCatalogForm((prev) => ({ ...prev, name: e.target.value }))} />
+            <TextField label="Barcode/Code" value={catalogForm.code} onChange={(e) => setCatalogForm((prev) => ({ ...prev, code: e.target.value }))} />
+            <TextField label="Location (Optional)" value={catalogForm.location} onChange={(e) => setCatalogForm((prev) => ({ ...prev, location: e.target.value }))} />
+            <TextField label="Stock Quantity" type="number" value={catalogForm.stock} onChange={(e) => setCatalogForm((prev) => ({ ...prev, stock: e.target.value }))} />
           </Stack>
         </DialogContent>
         <DialogActions sx={{ p: 2 }}>
           <Button onClick={() => setCatalogFormOpen(false)} color="inherit">Cancel</Button>
           <Button onClick={submitCatalogForm} variant="contained" color="primary">Save Item</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Clear Cart Confirmation */}
+      <Dialog open={clearCartConfirmOpen} onClose={() => setClearCartConfirmOpen(false)}>
+        <DialogTitle>Clear Cart</DialogTitle>
+        <DialogContent><Typography color="text.secondary">Remove all items from the current request?</Typography></DialogContent>
+        <DialogActions sx={{ p: 2 }}>
+          <Button onClick={() => setClearCartConfirmOpen(false)} color="inherit">Cancel</Button>
+          <Button onClick={() => { setCart({}); setClearCartConfirmOpen(false); }} variant="contained" color="error">Clear All</Button>
         </DialogActions>
       </Dialog>
 

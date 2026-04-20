@@ -49,8 +49,8 @@ export default function AdminSystemScreen() {
         <XStack alignItems="center" gap="$3">
           <Button size="$3" theme="gray" circular icon={ArrowLeft} onPress={() => router.back()} />
           <YStack flex={1}>
-            <H2 color="$color12">Adatbazis es Szinkron</H2>
-            <Text fontSize={14} color="$color10">Offline sor, API kapcsolat ellenorzese</Text>
+            <H2 color="$color12">Adatbázis és Szinkron</H2>
+            <Text fontSize={14} color="$color10">Offline sor, API kapcsolat ellenőrzése</Text>
           </YStack>
         </XStack>
       </YStack>
@@ -59,9 +59,9 @@ export default function AdminSystemScreen() {
 
       <ScrollView flex={1} contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
         <YStack gap="$4">
-          {/* RENDSZER ALLAPOT */}
+          {/* RENDSZER ÁLLAPOT */}
           <Text fontSize={14} fontWeight="600" color="$color11" textTransform="uppercase" marginBottom="$1">
-            Rendszer allapot
+            Rendszer állapot
           </Text>
           <Card backgroundColor="$color2" borderRadius="$4" padding="$4" borderWidth={1} borderColor="$color4" gap="$3">
             <XStack justifyContent="space-between" alignItems="center">
@@ -70,7 +70,7 @@ export default function AdminSystemScreen() {
                   ? <Wifi size={16} color="$green10" />
                   : <WifiOff size={16} color="$red10" />
                 }
-                <Text fontSize={14} color="$color11">Halozati kapcsolat</Text>
+                <Text fontSize={14} color="$color11">Hálózati kapcsolat</Text>
               </XStack>
               <Text fontSize={13} fontWeight="600" color={syncStatus.isOnline ? "$green10" : "$red10"}>
                 {syncStatus.isOnline ? "Online" : "Offline"}
@@ -80,12 +80,12 @@ export default function AdminSystemScreen() {
             <XStack justifyContent="space-between" alignItems="center">
               <Text fontSize={14} color="$color11">Szinkron sor</Text>
               <Text fontSize={13} fontWeight="600" color={(syncStatus.pendingOperations ?? 0) > 0 ? "$orange10" : "$green10"}>
-                {syncStatus.pendingOperations ?? 0} varakodo
+                {syncStatus.pendingOperations ?? 0} várakozó
               </Text>
             </XStack>
             <Separator borderColor="$color4" />
             <XStack justifyContent="space-between" alignItems="center">
-              <Text fontSize={14} color="$color11">Utolso szinkron</Text>
+              <Text fontSize={14} color="$color11">Utolsó szinkron</Text>
               <Text fontSize={13} color="$color10">{formattedLastSync}</Text>
             </XStack>
           </Card>
@@ -97,7 +97,7 @@ export default function AdminSystemScreen() {
           <Card backgroundColor="$color2" borderRadius="$4" padding="$4" borderWidth={1} borderColor="$color4" gap="$3">
             <XStack justifyContent="space-between" alignItems="center">
               <YStack flex={1}>
-                <Text fontSize={14} fontWeight="600" color="$color12">API elerhetoseg</Text>
+                <Text fontSize={14} fontWeight="600" color="$color12">API elérhetőség</Text>
                 {connectionStatus !== "unknown" && (
                   <XStack alignItems="center" gap="$1" marginTop="$1">
                     {connectionStatus === "ok"
@@ -106,8 +106,8 @@ export default function AdminSystemScreen() {
                     }
                     <Text fontSize={12} color={connectionStatus === "ok" ? "$green10" : "$red10"}>
                       {connectionStatus === "ok"
-                        ? `Elerheto${connectionUser ? ` (${connectionUser})` : ""}`
-                        : "Kapcsolodasi hiba"
+                        ? `Elérhető${connectionUser ? ` (${connectionUser})` : ""}`
+                        : "Kapcsolódási hiba"
                       }
                     </Text>
                   </XStack>
@@ -119,15 +119,15 @@ export default function AdminSystemScreen() {
             </XStack>
           </Card>
 
-          {/* SZINKRON MUVELETEK */}
+          {/* SZINKRON MŰVELETEK */}
           <Text fontSize={14} fontWeight="600" color="$color11" textTransform="uppercase" marginBottom="$1" marginTop="$2">
-            Adatbazis muveletek
+            Adatbázis műveletek
           </Text>
           <Card backgroundColor="$color2" borderRadius="$4" padding="$4" borderWidth={1} borderColor="$color4" gap="$3">
             <XStack justifyContent="space-between" alignItems="center">
               <YStack flex={1}>
-                <Text fontSize={14} fontWeight="600" color="$color12">Varakodo muveletek kuldese</Text>
-                <Text fontSize={12} color="$color10">Offline sor manualis szinkronizalasa</Text>
+                <Text fontSize={14} fontWeight="600" color="$color12">Várakozó műveletek küldése</Text>
+                <Text fontSize={12} color="$color10">Offline sor manuális szinkronizálása</Text>
               </YStack>
               <Button
                 size="$3"

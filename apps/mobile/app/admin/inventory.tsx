@@ -157,7 +157,7 @@ export default function AdminInventoryScreen() {
           <Button size="$3" theme="gray" circular icon={ArrowLeft} onPress={() => router.back()} />
           <YStack flex={1}>
             <H2 color="$color12">Katalógus és Készlet</H2>
-            <Text fontSize={14} color="$color10">Termékek módosítása, készletkorrektio</Text>
+            <Text fontSize={14} color="$color10">Termékek módosítása, készletkorrekció</Text>
           </YStack>
           <Button size="$3" theme="gray" circular icon={RefreshCw} onPress={loadItems} disabled={loading} />
           <Button size="$3" theme="green" circular icon={Plus} onPress={handleCreate} />
