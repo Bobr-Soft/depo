@@ -1,7 +1,8 @@
 import { ScrollView, Text, YStack, Button, Avatar, Card, XStack, CircleChevronDown, CircleChevronUp, Separator } from '@repo/ui';
 import { useColorScheme, useSyncStatus } from '@/hooks';
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useCallback } from 'react';
 import { Linking } from 'react-native';
+import { useFocusEffect, router } from 'expo-router';
 import { Camera } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
 import loadTasks from '@/components/api';
@@ -21,7 +22,6 @@ import {
 } from '@/services/secureStorage';
 import { cleanupSyncService, forceRefresh } from '@/services/sync';
 import { logout } from '@/services/auth';
-import { router } from 'expo-router';
 import { Colors } from '@/constants';
 import { APP_VERSION } from '@/constants/config';
 import { Shield, LifeBuoy, LogOut, Smartphone, Volume2, Vibrate, Activity, HardDrive } from '@tamagui/lucide-icons';
@@ -80,8 +80,8 @@ export default function ProfileScreen() {
   const [scanSoundEnabled, setScanSoundState] = useState(true);
   const [hapticFeedbackEnabled, setHapticFeedbackState] = useState(true);
 
-  // --- INITIAL LOAD ---
-  useEffect(() => {
+  // --- REFRESH ON FOCUS ---
+  useFocusEffect(useCallback(() => {
     async function loadProfile() {
       const [storedEmail, storedRole, storedApiUrl, storedPhotoUrl, savedScanSound, savedHaptic, permissions, loadedTasks] = await Promise.all([
         getUserEmail(), getUserRole(), getApiUrl(), getUserPhotoUrl(),
@@ -99,7 +99,7 @@ export default function ProfileScreen() {
       setTasks(loadedTasks);
     }
     loadProfile();
-  }, []);
+  }, []));
 
   useEffect(() => {
     setImageLoadFailed(false);

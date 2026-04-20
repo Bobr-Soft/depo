@@ -44,8 +44,18 @@ function createMockConnection(queryResults = []) {
   };
 }
 
-const adminToken = makeToken({ role: 'Admin' });
-const workerToken = makeToken({ role: 'Worker' });
+const adminToken = makeToken({ email: 'admin@example.com', role: 'Admin' });
+const workerToken = makeToken({ email: 'worker@example.com', role: 'Worker' });
+const supervisorToken = makeToken({ email: 'supervisor@example.com', role: 'Supervisor' });
+
+const defaultQueryMock = jest.fn().mockImplementation(async (_sql, params) => {
+  const email = params?.[0] && typeof params[0] === 'string' ? params[0].toLowerCase() : null;
+  if (email === 'admin@example.com') return [[{ id: 1, email: 'admin@example.com', role: 'Admin' }], []];
+  if (email === 'worker@example.com') return [[{ id: 1, email: 'worker@example.com', role: 'Worker' }], []];
+  if (email === 'supervisor@example.com') return [[{ id: 1, email: 'supervisor@example.com', role: 'Supervisor' }], []];
+  if (email === 'unrelated-worker@example.com') return [[{ id: 99, email: 'unrelated-worker@example.com', role: 'Worker' }], []];
+  return [[{ id: 1, email: 'admin@example.com', role: 'Admin' }], []];
+});
 
 beforeEach(() => {
   jest.clearAllMocks();
