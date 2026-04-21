@@ -1449,7 +1449,7 @@ function getMaterialRequestTaskFilter(prefix, capabilities) {
 
 // Create material request task from web picking dashboard
 app.post('/material-requests', authenticateJWT, async (req, res) => {
-  const { line, priority, items } = req.body;
+  const { line, priority, items, deadline } = req.body;
 
   if (!isValidString(line, 64)) {
     return res.status(400).json({ message: 'Invalid line value' });
@@ -1499,10 +1499,26 @@ app.post('/material-requests', authenticateJWT, async (req, res) => {
     const requestPriority = normalizeMaterialRequestPriority(priority);
     const taskName = `Anyagigénylés - ${line}`;
 
+    // Accept client-provided deadline or compute from priority
+    let deadlineValue = null;
+    if (deadline) {
+      const parsed = new Date(deadline);
+      deadlineValue = Number.isNaN(parsed.getTime()) ? null : parsed;
+    }
+    if (!deadlineValue) {
+      const d = new Date();
+      if (requestPriority === 'urgent') {
+        d.setHours(d.getHours() + 1);
+      } else {
+        d.setDate(d.getDate() + 2);
+      }
+      deadlineValue = d;
+    }
+
     const [taskResult] = await connection.query(
       `INSERT INTO tasks (name, type, source_id, assigned_user, status, priority, deadline, created_at, updated_at)
-       VALUES (?, ?, ?, NULL, 'pending', ?, NULL, NOW(), NOW())`,
-      [taskName, materialRequestTaskType, line, requestPriority]
+       VALUES (?, ?, ?, NULL, 'pending', ?, ?, NOW(), NOW())`,
+      [taskName, materialRequestTaskType, line, requestPriority, deadlineValue]
     );
 
     const taskId = taskResult.insertId;
