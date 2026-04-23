@@ -1,0 +1,9 @@
+# Un-ignore database files in this folder
+!*.sql
+!*.dump
+!*.pg
+!*.png
+!*.jpg
+!*.jpeg
+!*.webp
+!*.svg
