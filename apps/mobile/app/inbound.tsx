@@ -4,10 +4,11 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { YStack, XStack, Button, Text, H2, Card, ScrollView, Separator, Switch } from "@repo/ui";
 import { ScanBarcode, Package, ArrowLeft, RefreshCw, Trash2, Edit3, Save, CheckCircle2, AlertCircle, MapPin, RotateCcw } from "@tamagui/lucide-icons";
 import { BarcodeScanner } from "@/components";
-import { router, useLocalSearchParams } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import { buildApiUrl, getApiUrl, getToken, getScanSoundEnabled, getHapticFeedbackEnabled } from "@/services/secureStorage";
 import { isOnline, syncData } from "@/services/sync";
 import { enqueueSyncOperation, getSyncQueue, initDatabase, isDatabaseInitialized, saveInboundDraft, loadInboundDraft, clearInboundDraft } from "@/services/database";
+import { consumePendingInboundAction } from "@/services/inboundEditStore";
 
 type ScannedInboundItem = {
   code: string;
@@ -35,12 +36,6 @@ const normalizeBarcode = (value: string) => value.trim().replace(/\s+/g, "").toL
 
 export default function InboundScreen() {
   const insets = useSafeAreaInsets();
-  const { action, code: editedCode, quantity: editedQuantity, nonce } = useLocalSearchParams<{
-    action?: string | string[];
-    code?: string | string[];
-    quantity?: string | string[];
-    nonce?: string | string[];
-  }>();
 
   const [showScanner, setShowScanner] = useState(false);
   const [scannerKey, setScannerKey] = useState(0);
@@ -54,11 +49,8 @@ export default function InboundScreen() {
   const [hapticEnabled, setHapticEnabled] = useState(true);
 
   const isProcessing = useRef(false);
-  const lastHandledEditNonce = useRef<string | null>(null);
   const draftSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasMounted = useRef(false);
-
-  const getSingleParam = (value: string | string[] | undefined): string | undefined => Array.isArray(value) ? value[0] : value;
 
   const loadPendingRetryCount = useCallback(async () => {
     try {
@@ -119,36 +111,27 @@ export default function InboundScreen() {
     return () => { if (draftSaveTimer.current) clearTimeout(draftSaveTimer.current); };
   }, [scannedItems]);
 
-  useEffect(() => {
-    const actionValue = getSingleParam(action);
-    const codeValue = getSingleParam(editedCode);
-    const quantityValue = getSingleParam(editedQuantity);
-    const nonceValue = getSingleParam(nonce);
-
-    if (!nonceValue || lastHandledEditNonce.current === nonceValue) return;
-    if (!codeValue || (actionValue !== "update" && actionValue !== "delete")) {
-      lastHandledEditNonce.current = nonceValue;
-      return;
-    }
-
-    const normalizedCode = normalizeBarcode(codeValue);
-    if (!normalizedCode) {
-      lastHandledEditNonce.current = nonceValue;
-      return;
-    }
-
-    if (actionValue === "delete") {
-      setScannedItems((prev) => prev.filter((item) => normalizeBarcode(item.code) !== normalizedCode));
-    } else {
-      const nextQuantity = Math.max(1, Number.parseInt(quantityValue ?? "1", 10) || 1);
-      setScannedItems((prev) =>
-        prev.map((item) => normalizeBarcode(item.code) === normalizedCode ? { ...item, quantity: nextQuantity, timestamp: new Date() } : item)
-      );
-    }
-
-    setSummary(null);
-    lastHandledEditNonce.current = nonceValue;
-  }, [action, editedCode, editedQuantity, nonce]);
+  // Pick up edits from the edit screen when we come back into focus
+  useFocusEffect(
+    useCallback(() => {
+      const pending = consumePendingInboundAction();
+      if (!pending) return;
+      if (pending.type === "delete") {
+        setScannedItems((prev) =>
+          prev.filter((item) => normalizeBarcode(item.code) !== normalizeBarcode(pending.code))
+        );
+      } else {
+        setScannedItems((prev) =>
+          prev.map((item) =>
+            normalizeBarcode(item.code) === normalizeBarcode(pending.code)
+              ? { ...item, quantity: pending.quantity, timestamp: new Date() }
+              : item
+          )
+        );
+      }
+      setSummary(null);
+    }, [])
+  );
 
   const handleScan = useCallback((data: string, type: string) => {
     if (isProcessing.current) return;
@@ -296,14 +279,16 @@ export default function InboundScreen() {
         setScannedItems(updatedItemsList);
         Alert.alert("Részleges mentés", `Sikeres kiosztás: ${batchSummary.successful}\nSikertelen (pl. tele a raktár): ${batchSummary.failed}\nVárólistára tett: ${batchSummary.queued}`);
       } else {
-        // Ha minden sikeres, töröljük a listát és navigálunk a főoldalra
+        // Ha minden sikeres, navigálunk az elrakás képernyőre
         setScannedItems([]);
         await clearInboundDraft();
-        Alert.alert(
-          "Lokációk lefoglalva",
-          `${batchSummary.successful} tételhez sikeresen kijelöltük a cél polcokat. Kérjük, vidd a tételeket a kijelölt helyekre.`,
-          [{ text: "Megértettem", onPress: () => router.replace('/(tabs)') }]
-        );
+        const putawayItems = updatedItemsList
+          .filter((i) => i.status === 'allocated' && i.assignedLocation)
+          .map((i) => ({ code: i.code, quantity: i.quantity, assignedLocation: i.assignedLocation }));
+        router.replace({
+          pathname: "/inbound-putaway",
+          params: { items: JSON.stringify(putawayItems) },
+        });
       }
     } catch (error) {
       console.error("Failed to save and allocate items:", error);

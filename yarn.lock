@@ -8625,6 +8625,7 @@ __metadata:
     env: "npm:^0.0.2"
     express: "npm:^5.1.0"
     jest: "npm:^30.3.0"
+    jest-html-reporters: "npm:^3.1.7"
     jsonwebtoken: "npm:^9.0.2"
     mysql2: "npm:^3.15.1"
     supertest: "npm:^7.2.2"
@@ -12240,7 +12241,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"fs-extra@npm:^10.1.0":
+"fs-extra@npm:^10.0.0, fs-extra@npm:^10.1.0":
   version: 10.1.0
   resolution: "fs-extra@npm:10.1.0"
   dependencies:
@@ -13904,6 +13905,16 @@ __metadata:
     fsevents:
       optional: true
   checksum: 10c0/2683a8f29793c75a4728787662972fedd9267704c8f7ef9d84f2beed9a977f1cf5e998c07b6f36ba5603f53cb010c911fe8cd0ac9886e073fe28ca66beefd30c
+  languageName: node
+  linkType: hard
+
+"jest-html-reporters@npm:^3.1.7":
+  version: 3.1.7
+  resolution: "jest-html-reporters@npm:3.1.7"
+  dependencies:
+    fs-extra: "npm:^10.0.0"
+    open: "npm:^8.0.3"
+  checksum: 10c0/1ad97df450b7757a5d1267d26706cba5cba069538ef51cb99b434f0dc560fbf7dfa7c276e86b53068103e06caffe4acc3dbfbcc37a1d0e9d07b457ac24b9b63b
   languageName: node
   linkType: hard
 
@@ -16484,7 +16495,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"open@npm:^8.0.4":
+"open@npm:^8.0.3, open@npm:^8.0.4":
   version: 8.4.2
   resolution: "open@npm:8.4.2"
   dependencies:

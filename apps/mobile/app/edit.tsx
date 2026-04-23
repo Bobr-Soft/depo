@@ -6,6 +6,7 @@ import { YStack, XStack, Text, H3, Button, Card, Input, Separator, Spinner, Scro
 import { adminCreateItem, adminGetItemByBarcode, adminUpdateItem, adminGetCategories, adminGetLocations, type ApiItem } from "@/components/adminApi";
 import { enqueueSyncOperation, getItemByBarcode, initDatabase, isDatabaseInitialized, saveItemToLocal } from "@/services/database";
 import { isOnline } from "@/services/sync";
+import { setPendingInboundAction } from "@/services/inboundEditStore";
 
 function singleParam(value: string | string[] | undefined): string {
     if (Array.isArray(value)) {
@@ -64,16 +65,8 @@ export default function EditScreen() {
             Alert.alert("Hiányzó adat", "Nem található a szerkesztendő vonalkód.");
             return;
         }
-
-        router.replace({
-            pathname: "/inbound",
-            params: {
-                action: "update",
-                code,
-                quantity: String(normalizedQuantity),
-                nonce: String(Date.now()),
-            },
-        });
+        setPendingInboundAction({ type: "update", code, quantity: normalizedQuantity });
+        router.back();
     };
 
     const applyItemToForm = useCallback((item: {
@@ -89,10 +82,13 @@ export default function EditScreen() {
         setBarcodeInput(item.barcode ?? "");
         setNameInput(item.name ?? "");
         setDescriptionInput(item.description ?? "");
-        setQuantityInput(String(Math.max(1, Number(item.quantity) || 1)));
+        // For inbound edits keep the scanned quantity, not the DB stock quantity
+        if (!isInbound) {
+            setQuantityInput(String(Math.max(1, Number(item.quantity) || 1)));
+        }
         setCategoryIdInput(item.category_id != null ? String(item.category_id) : "");
         setLocationIdInput(item.location_id != null ? String(item.location_id) : "");
-    }, []);
+    }, [isInbound]);
 
     const toNullableInt = (raw: string): number | null => {
         const trimmed = raw.trim();
@@ -289,14 +285,8 @@ export default function EditScreen() {
                 text: "Törlés",
                 style: "destructive",
                 onPress: () => {
-                    router.replace({
-                        pathname: "/inbound",
-                        params: {
-                            action: "delete",
-                            code,
-                            nonce: String(Date.now()),
-                        },
-                    });
+                    setPendingInboundAction({ type: "delete", code });
+                    router.back();
                 },
             },
         ]);

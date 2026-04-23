@@ -192,15 +192,32 @@ Minden parancs a monorepo gyökérkönyvtárából futtatandó:
 | `yarn format` | Összes `.ts`, `.tsx`, `.md` fájl formázása Prettierrel |
 | `yarn check-types` | Összes TypeScript projekt típusellenőrzése |
 | `yarn workspace mobile start` | Expo fejlesztői szerver indítása a mobilhoz |
-| `yarn workspace backend test` | API tesztek futtatása (Jest) |
+| `yarn workspace backend test` | API tesztek futtatása (Jest, terminál kimenet) |
+| `yarn workspace backend test:report` | API tesztek futtatása + HTML riport generálása (`apps/api/test-reports/test-results.html`) |
 
 ## Tesztelés
 
 Az API Jest tesztcsomaggal rendelkezik, amelynek adatbázis-kapcsolatai mock-olva vannak — a tesztek futtatásához nincs szükség működő MySQL példányra:
 
 ```sh
+# Tesztek futtatása (terminál kimenet)
 yarn workspace backend test
+
+# Tesztek futtatása + HTML riport generálása
+yarn workspace backend test:report
 ```
+
+### HTML tesztriport
+
+A `test:report` parancs lefuttatja az összes tesztet, és egy önálló HTML fájlt generál:
+
+```
+apps/api/test-reports/test-results.html
+```
+
+A riport tartalmazza az összes tesztcsoportot és tesztet egyenként, a futási időkkel és pass/fail státusszal — böngészőben közvetlenül megnyitható, és offline megosztható külső érintettekkel.
+
+**Automatikus frissítés CI-ban:** minden `dev` vagy `main` ágra való push után a GitHub Actions automatikusan lefuttatja a teszteket, és egy `docs: update API test report [skip ci]` committal visszatölti a frissített riportot a repóba.
 
 ## Mobilos buildek
 
@@ -224,16 +241,10 @@ GitHub Actions workflow-ok a `.github/workflows/` könyvtárban:
 | Workflow | Esemény | Feladat |
 |---|---|---|
 | `ci.yml` | Push / PR | Lintolás és tesztek futtatása |
-| `deploy-api.yml` | Push `main` ágra (API módosítások) | Tesztek futtatása, API deploy Renderre |
+| `deploy-api.yml` | Push `main` ágra (API módosítások) | Tesztek futtatása, API deploy |
 | `deploy-web.yml` | Push `main` ágra (webes módosítások) | Webes dashboard deployolása |
 | `release-drafter.yml` | Push `main` / `dev` ágra | iOS és Android build EAS-en keresztül, APK/IPA csatolása a GitHub release-hez; `dev` ágra való push `nightly` pre-release-t hoz létre |
 | `mobile.yml` | Mobilos módosítások | Mobilalkalmazás buildelése EAS-en keresztül |
-
-## Éles telepítés
-
-Az API a [Render](https://render.com) platformon fut (ingyenes csomag). A környezeti változók (`DB_HOST`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `JWT_SECRET`, `CORS_ORIGINS`) a Render dashboardon konfigurálhatók — a repóban nincs `render.yaml` fájl.
-
-> **Megjegyzés:** A Render ingyenes csomagja inaktivitás után leáll. A mobilalkalmazás automatikusan kezeli a cold startokat: 90 másodperces időtúllépéssel és újrapróbálkozási logikával.
 
 ## Projektstruktúra
 
