@@ -234,4 +234,4 @@ async function getTaskByIdForUser(taskId, userEmail, userId = null, userRole = n
   return task ?? null;
 }
 
-module.exports = { getTaskByIdForUser, getTasksForUser };
+module.exports = { getTaskByIdForUser, getTasksForUser, taskSchemaCache };

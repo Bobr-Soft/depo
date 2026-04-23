@@ -1,6 +1,8 @@
 const express = require('express');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
+const swaggerUi = require('swagger-ui-express');
+const swaggerDocument = require('./swagger');
 const db = require('./db');
 const { getTaskByIdForUser, getTasksForUser } = require('./tasks');
 const { allocatePutawayLocation } = require('./wms');
@@ -50,6 +52,10 @@ app.use((req, _res, next) => {
     pathOnly === '/api'
     || pathOnly === '/api/'
     || pathOnly === '/api/inbound/putaway'
+    || pathOnly === '/api/docs'
+    || pathOnly === '/api/docs/'
+    || pathOnly === '/api/docs/openapi.json'
+    || pathOnly.startsWith('/api/docs/')
     || /^\/api\/tasks\/[^/]+$/.test(pathOnly)
     || /^\/api\/tasks\/[^/]+\/items\/[^/]+\/exception$/.test(pathOnly);
 
@@ -595,6 +601,11 @@ function requireSupervisorOrAdmin(req, res, next) {
   }
   next();
 }
+
+// ─── Swagger API Docs ─────────────────────────────────────────────────────────
+app.use('/api/docs', swaggerUi.serve);
+app.get('/api/docs', swaggerUi.setup(swaggerDocument, { explorer: true }));
+app.get('/api/docs/openapi.json', (_req, res) => res.json(swaggerDocument));
 
 app.get('/api', (_req, res) => {
   res.json({
@@ -3929,3 +3940,4 @@ if (require.main === module) {
 }
 
 module.exports = app;
+module.exports.schemaCaches = { itemsSchemaCache, usersSchemaCache, tasksSchemaCache, categoriesSchemaCache, locationsSchemaCache };
