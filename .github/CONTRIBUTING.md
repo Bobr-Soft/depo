@@ -60,7 +60,7 @@ yarn dev
 # Run specific app
 yarn workspace frontend dev     # Web app at localhost:5173
 yarn workspace backend dev      # API at localhost:3000
-yarn workspace depo-mobile start # Mobile app with Expo
+yarn workspace mobile start # Mobile app with Expo
 ```
 
 ### Building

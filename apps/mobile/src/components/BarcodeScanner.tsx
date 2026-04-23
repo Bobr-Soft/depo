@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { StyleSheet, Dimensions } from "react-native";
+import { StyleSheet, Dimensions, View } from "react-native";
 import { CameraView, useCameraPermissions, BarcodeScanningResult } from "expo-camera";
 import { YStack, XStack, Button, Text, H2 } from "@repo/ui";
 import { X, Flashlight, FlashlightOff, Camera, CheckCircle2 } from "@tamagui/lucide-icons";
@@ -51,6 +51,8 @@ export function BarcodeScanner({
   const onScanRef = useRef(onScan);
   const lastScanRef = useRef<{ data: string; timestamp: number } | null>(null);
   const soundRef = useRef<Audio.Sound | null>(null);
+  const scanAreaRef = useRef<View>(null);
+  const scanAreaLayoutRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
 
   useEffect(() => {
     onScanRef.current = onScan;
@@ -84,11 +86,25 @@ export function BarcodeScanner({
     }
   }, [scanned, autoResetDelay]);
 
-  const handleBarCodeScanned = useCallback(({ type, data }: BarcodeScanningResult) => {
+  const handleBarCodeScanned = useCallback(({ type, data, bounds }: BarcodeScanningResult) => {
     if (scanLock.current) return;
 
     const normalizedData = data.trim();
     if (!normalizedData) return;
+
+    const layout = scanAreaLayoutRef.current;
+    if (layout && bounds && (bounds.size.width > 0 || bounds.size.height > 0)) {
+      const barcodeCenterX = bounds.origin.x + bounds.size.width / 2;
+      const barcodeCenterY = bounds.origin.y + bounds.size.height / 2;
+      if (
+        barcodeCenterX < layout.x ||
+        barcodeCenterX > layout.x + layout.width ||
+        barcodeCenterY < layout.y ||
+        barcodeCenterY > layout.y + layout.height
+      ) {
+        return;
+      }
+    }
 
     const now = Date.now();
     const previousScan = lastScanRef.current;
@@ -186,7 +202,17 @@ export function BarcodeScanner({
 
         {/* Célkereszt (Keret) */}
         <YStack flex={1} justifyContent="center" alignItems="center">
-          <YStack width={SCAN_AREA_SIZE} height={SCAN_AREA_SIZE} position="relative">
+          <YStack
+            ref={scanAreaRef as never}
+            width={SCAN_AREA_SIZE}
+            height={SCAN_AREA_SIZE}
+            position="relative"
+            onLayout={() => {
+              scanAreaRef.current?.measureInWindow((x, y, width, height) => {
+                scanAreaLayoutRef.current = { x, y, width, height };
+              });
+            }}
+          >
             {/* Sarkok */}
             {['TopLeft', 'TopRight', 'BottomLeft', 'BottomRight'].map((corner) => (
               <YStack

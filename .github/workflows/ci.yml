@@ -165,6 +165,56 @@ jobs:
           retention-days: 7
 
   # ============================================
+  # API Test Report (push only)
+  # ============================================
+  test-report:
+    name: 🧪 API Test Report
+    runs-on: ubuntu-latest
+    needs: setup
+    if: github.event_name == 'push'
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Enable Corepack (Yarn 4)
+        run: corepack enable
+
+      - name: Restore node_modules cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            apps/*/node_modules
+            packages/*/node_modules
+          key: ${{ runner.os }}-node-${{ hashFiles('**/yarn.lock') }}
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      - name: Run API tests and generate report
+        working-directory: apps/api
+        env:
+          JWT_SECRET: test-secret
+        run: yarn test:report
+
+      - name: Commit test report
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: 'docs: update API test report [skip ci]'
+          file_pattern: 'apps/api/test-reports/test-results.html'
+          commit_user_name: 'github-actions[bot]'
+          commit_user_email: 'github-actions[bot]@users.noreply.github.com'
+
+  # ============================================
   # Final Status Check
   # ============================================
   status-check:

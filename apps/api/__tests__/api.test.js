@@ -14,6 +14,8 @@ const request = require('supertest');
 const jwt = require('jsonwebtoken');
 const db = require('../db');
 const app = require('../index');
+const { schemaCaches } = require('../index');
+const { taskSchemaCache } = require('../tasks');
 const { allocatePutawayLocation, sortItemsBySerpentineRoute } = require('../wms');
 
 function makeToken(payload = {}) {
@@ -61,6 +63,13 @@ beforeEach(() => {
   jest.clearAllMocks();
   db.query.mockImplementation(defaultQueryMock);
   db.getConnection.mockReset();
+  // Reset schema caches so each test starts with a clean slate
+  if (schemaCaches) {
+    Object.values(schemaCaches).forEach((cache) => { cache.value = null; });
+  }
+  if (taskSchemaCache) {
+    taskSchemaCache.userIsActiveSelectExpr = null;
+  }
 });
 
 describe('WMS utilities', () => {
@@ -361,6 +370,9 @@ describe('GET /tasks', () => {
 describe('GET /api/tasks/:id', () => {
   test('returns task items in serpentine route order', async () => {
     db.query.mockResolvedValueOnce([[{ id: 1, email: 'test@example.com', role: 'Admin' }], []]);
+    // tasks.js getUserIsActiveSelectExpr fires 2 schema probes before the actual SELECT
+    db.query.mockResolvedValueOnce([[{ id: 1 }], []]);  // is_active probe
+    db.query.mockResolvedValueOnce([[{ id: 1 }], []]);  // isActive probe
     db.query.mockResolvedValueOnce([[
       {
         task_id: 7,
@@ -812,3 +824,949 @@ describe('PUT /tasks/:taskId/items/:itemId/picked', () => {
     expect(res.body.taskStatus).toBe('completed');
   });
 });
+
+// ─── Rentals — additional coverage ────────────────────────────────────────────
+
+describe('GET /rentals (all)', () => {
+  test('403 for worker', async () => {
+    const res = await request(app).get('/rentals').set('Authorization', `Bearer ${workerToken}`);
+    expect(res.status).toBe(403);
+  });
+
+  test('200 for supervisor', async () => {
+    db.query.mockResolvedValue([[{ id: 1, email: 'supervisor@example.com', role: 'Supervisor' }], []]);
+    const res = await request(app).get('/rentals').set('Authorization', `Bearer ${supervisorToken}`);
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+  });
+
+  test('200 for admin', async () => {
+    db.query.mockResolvedValue([[{ id: 1, email: 'admin@example.com', role: 'Admin' }], []]);
+    const res = await request(app).get('/rentals').set('Authorization', `Bearer ${adminToken}`);
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+  });
+});
+
+describe('GET /rentals/pending', () => {
+  test('403 for worker', async () => {
+    const res = await request(app).get('/rentals/pending').set('Authorization', `Bearer ${workerToken}`);
+    expect(res.status).toBe(403);
+  });
+
+  test('200 for admin returns array', async () => {
+    db.query.mockResolvedValue([[{ id: 1, email: 'admin@example.com', role: 'Admin' }], []]);
+    const res = await request(app).get('/rentals/pending').set('Authorization', `Bearer ${adminToken}`);
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+  });
+});
+
+describe('POST /rentals/:id/cancel', () => {
+  test('401 without token', async () => {
+    const res = await request(app).post('/rentals/10/cancel');
+    expect(res.status).toBe(401);
+  });
+
+  test('404 when rental not found', async () => {
+    db.query
+      .mockResolvedValueOnce([[{ id: 1, email: 'worker@example.com', role: 'Worker' }], []])
+      .mockResolvedValueOnce([[], []]);
+    const res = await request(app)
+      .post('/rentals/999/cancel')
+      .set('Authorization', `Bearer ${workerToken}`);
+    expect(res.status).toBe(404);
+  });
+
+  test('409 when rental is not pending', async () => {
+    db.query
+      .mockResolvedValueOnce([[{ id: 1, email: 'worker@example.com', role: 'Worker' }], []])
+      .mockResolvedValueOnce([[{ id: 10, status: 'approved', requester_user_id: 1, requester_email: 'worker@example.com' }], []]);
+    const res = await request(app)
+      .post('/rentals/10/cancel')
+      .set('Authorization', `Bearer ${workerToken}`);
+    expect(res.status).toBe(409);
+  });
+
+  test('200 requester can cancel own pending rental', async () => {
+    db.query
+      .mockResolvedValueOnce([[{ id: 1, email: 'worker@example.com', role: 'Worker' }], []])
+      .mockResolvedValueOnce([[{ id: 10, status: 'pending', requester_user_id: 1, requester_email: 'worker@example.com' }], []])
+      .mockResolvedValueOnce([{ affectedRows: 1 }, []]);
+    const res = await request(app)
+      .post('/rentals/10/cancel')
+      .set('Authorization', `Bearer ${workerToken}`);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ id: 10, status: 'cancelled' });
+  });
+
+  test('403 when different worker tries to cancel', async () => {
+    const otherToken = makeToken({ email: 'other@example.com', userId: '99', role: 'Worker' });
+    db.query
+      .mockResolvedValueOnce([[{ id: 99, email: 'other@example.com', role: 'Worker' }], []])
+      .mockResolvedValueOnce([[{ id: 10, status: 'pending', requester_user_id: 1, requester_email: 'worker@example.com' }], []]);
+    const res = await request(app)
+      .post('/rentals/10/cancel')
+      .set('Authorization', `Bearer ${otherToken}`);
+    expect(res.status).toBe(403);
+  });
+});
+
+describe('POST /rentals/:id/reject', () => {
+  test('200 admin can reject pending rental', async () => {
+    db.query
+      .mockResolvedValueOnce([[{ id: 1, email: 'admin@example.com', role: 'Admin' }], []])
+      .mockResolvedValueOnce([[{ id: 10, status: 'pending' }], []])
+      .mockResolvedValueOnce([{ affectedRows: 1 }, []])
+      .mockResolvedValueOnce([[{ id: 10, status: 'rejected', item_id: 1, quantity: 2, requester_email: 'worker@example.com', item_name: null, item_barcode: null, reviewer_email: null, review_note: null, reviewed_at: null, approved_at: null, returned_at: null, created_at: null, updated_at: null }], []]);
+    const res = await request(app)
+      .post('/rentals/10/reject')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ note: 'Out of stock' });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ id: 10, status: 'rejected' });
+  });
+});
+
+describe('POST /rentals/:id/return', () => {
+  test('200 requester can return approved rental', async () => {
+    const connection = createMockConnection([
+      [[{ id: 10, item_id: 1, quantity: 2, status: 'approved', requester_user_id: 1, requester_email: 'worker@example.com' }], []],
+      [[{ id: 1, quantity: 5 }], []],  // item fetch
+      [{ affectedRows: 1 }, []],        // update item quantity
+      [{ affectedRows: 1 }, []],        // insert inventory_log
+      [{ affectedRows: 1 }, []],        // update rental status
+    ]);
+    db.getConnection.mockResolvedValueOnce(connection);
+    const res = await request(app)
+      .post('/rentals/10/return')
+      .set('Authorization', `Bearer ${workerToken}`);
+    expect(res.status).toBe(200);
+    expect(connection.commit).toHaveBeenCalled();
+  });
+});
+
+// ─── Users CRUD ────────────────────────────────────────────────────────────
+
+describe('POST /users', () => {
+  test('403 for non-admin', async () => {
+    const res = await request(app)
+      .post('/users')
+      .set('Authorization', `Bearer ${workerToken}`)
+      .send({ email: 'new@example.com' });
+    expect(res.status).toBe(403);
+  });
+
+  test('400 for invalid email', async () => {
+    const res = await request(app)
+      .post('/users')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ email: 'not-an-email' });
+    expect(res.status).toBe(400);
+  });
+
+  test('200 admin can create user', async () => {
+    db.query
+      .mockResolvedValueOnce([[{ id: 1, email: 'admin@example.com', role: 'Admin' }], []])
+      // 3 schema probe calls handled by defaultQueryMock fallback
+      .mockResolvedValueOnce([[{ id: 1, email: 'admin@example.com', role: 'Admin' }], []])  // probe 1
+      .mockResolvedValueOnce([[{ id: 1, email: 'admin@example.com', role: 'Admin' }], []])  // probe 2
+      .mockResolvedValueOnce([[{ id: 1, email: 'admin@example.com', role: 'Admin' }], []])  // probe 3
+      .mockResolvedValueOnce([{ insertId: 5 }, []])
+      .mockResolvedValueOnce([[{ id: 5, email: 'new@example.com', role: 'Worker', isActive: 1 }], []]);
+    const res = await request(app)
+      .post('/users')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ email: 'new@example.com', role: 'worker' });
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty('id', 5);
+  });
+});
+
+describe('PUT /users/:id', () => {
+  test('403 for non-admin', async () => {
+    const res = await request(app)
+      .put('/users/1')
+      .set('Authorization', `Bearer ${workerToken}`)
+      .send({ email: 'x@example.com', role: 'worker' });
+    expect(res.status).toBe(403);
+  });
+
+  test('400 for invalid email', async () => {
+    const res = await request(app)
+      .put('/users/1')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ email: 'bad', role: 'worker' });
+    expect(res.status).toBe(400);
+  });
+
+  test('200 admin can update user', async () => {
+    db.query
+      .mockResolvedValueOnce([[{ id: 1, email: 'admin@example.com', role: 'Admin' }], []])
+      // 3 probes for getUsersSchemaCapabilities
+      .mockResolvedValueOnce([[{ id: 1, email: 'admin@example.com', role: 'Admin' }], []])
+      .mockResolvedValueOnce([[{ id: 1, email: 'admin@example.com', role: 'Admin' }], []])
+      .mockResolvedValueOnce([[{ id: 1, email: 'admin@example.com', role: 'Admin' }], []])
+      .mockResolvedValueOnce([{ affectedRows: 1 }, []])
+      // 3 probes again for SELECT (cache was populated but SELECT also calls getUsersSchemaCapabilities)
+      .mockResolvedValueOnce([[{ id: 2, email: 'updated@example.com', role: 'Worker', isActive: 1 }], []]);
+    const res = await request(app)
+      .put('/users/2')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ email: 'updated@example.com', role: 'worker', isActive: true });
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty('email', 'updated@example.com');
+  });
+});
+
+describe('DELETE /users/:id', () => {
+  test('403 for non-admin', async () => {
+    const res = await request(app)
+      .delete('/users/1')
+      .set('Authorization', `Bearer ${workerToken}`);
+    expect(res.status).toBe(403);
+  });
+
+  test('200 admin can delete user', async () => {
+    db.query
+      .mockResolvedValueOnce([[{ id: 1, email: 'admin@example.com', role: 'Admin' }], []])
+      .mockResolvedValueOnce([{ affectedRows: 1 }, []]);
+    const res = await request(app)
+      .delete('/users/5')
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(res.status).toBe(200);
+    expect(res.body.message).toMatch(/deleted/i);
+  });
+});
+
+// ─── Categories CRUD ───────────────────────────────────────────────────────
+
+describe('POST /categories', () => {
+  test('403 for non-admin', async () => {
+    const res = await request(app)
+      .post('/categories')
+      .set('Authorization', `Bearer ${workerToken}`)
+      .send({ name: 'Test' });
+    expect(res.status).toBe(403);
+  });
+
+  test('400 when name is missing', async () => {
+    const res = await request(app)
+      .post('/categories')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({});
+    expect(res.status).toBe(400);
+  });
+
+  test('200 admin can create category', async () => {
+    db.query
+      .mockResolvedValueOnce([[{ id: 1, email: 'admin@example.com', role: 'Admin' }], []])
+      // getCategoriesSchemaCapabilities: 3 parallel tableHasColumn calls
+      .mockResolvedValueOnce([[{ id: 1 }], []])  // probe has_description
+      .mockResolvedValueOnce([[{ id: 1 }], []])  // probe has_size_class
+      .mockResolvedValueOnce([[{ id: 1 }], []])  // probe has_min_stock_level
+      .mockResolvedValueOnce([{ insertId: 3 }, []])
+      .mockResolvedValueOnce([[{ id: 3, name: 'Power Tools', description: null }], []]);
+    const res = await request(app)
+      .post('/categories')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: 'Power Tools' });
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty('id', 3);
+    expect(res.body).toHaveProperty('name', 'Power Tools');
+  });
+});
+
+describe('PUT /categories/:id', () => {
+  test('403 for non-admin', async () => {
+    const res = await request(app)
+      .put('/categories/1')
+      .set('Authorization', `Bearer ${workerToken}`)
+      .send({ name: 'X' });
+    expect(res.status).toBe(403);
+  });
+
+  test('200 admin can update category', async () => {
+    db.query
+      .mockResolvedValueOnce([[{ id: 1, email: 'admin@example.com', role: 'Admin' }], []])
+      .mockResolvedValueOnce([[{ id: 1 }], []])  // probe has_description
+      .mockResolvedValueOnce([[{ id: 1 }], []])  // probe has_size_class
+      .mockResolvedValueOnce([[{ id: 1 }], []])  // probe has_min_stock_level
+      .mockResolvedValueOnce([{ affectedRows: 1 }, []])
+      .mockResolvedValueOnce([[{ id: 1, name: 'Hand Tools Updated', description: null }], []]);
+    const res = await request(app)
+      .put('/categories/1')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: 'Hand Tools Updated' });
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty('name', 'Hand Tools Updated');
+  });
+});
+
+describe('DELETE /categories/:id', () => {
+  test('403 for non-admin', async () => {
+    const res = await request(app)
+      .delete('/categories/1')
+      .set('Authorization', `Bearer ${workerToken}`);
+    expect(res.status).toBe(403);
+  });
+
+  test('200 admin can delete category', async () => {
+    db.query
+      .mockResolvedValueOnce([[{ id: 1, email: 'admin@example.com', role: 'Admin' }], []])
+      .mockResolvedValueOnce([{ affectedRows: 1 }, []]);
+    const res = await request(app)
+      .delete('/categories/1')
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(res.status).toBe(200);
+  });
+});
+
+// ─── Locations additional coverage ────────────────────────────────────────
+
+describe('GET /locations/position', () => {
+  test('400 when row_num missing', async () => {
+    const res = await request(app)
+      .get('/locations/position?col_num=1')
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(res.status).toBe(400);
+  });
+
+  test('200 returns matching locations', async () => {
+    db.query.mockResolvedValue([[{ id: 1, row_num: 1, col_num: 1, shelf_level: 1, is_xl: 0, is_active: 1 }], []]);
+    const res = await request(app)
+      .get('/locations/position?row_num=1&col_num=1')
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+  });
+});
+
+describe('GET /locations/position/rack', () => {
+  test('400 when row_num missing', async () => {
+    const res = await request(app)
+      .get('/locations/position/rack?col_num=1')
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(res.status).toBe(400);
+  });
+
+  test('200 returns rack with items', async () => {
+    db.query.mockResolvedValue([[{ id: 1, row_num: 1, col_num: 1, shelf_level: 1, is_xl: 0, is_active: 1, name: 'R1-C1', description: null, location_code: 'R1-C1-S1', item_id: null, item_name: null, barcode: null, item_quantity: null }], []]);
+    const res = await request(app)
+      .get('/locations/position/rack?row_num=1&col_num=1')
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(res.status).toBe(200);
+  });
+});
+
+describe('PUT /locations/:id', () => {
+  test('403 for non-admin', async () => {
+    const res = await request(app)
+      .put('/locations/1')
+      .set('Authorization', `Bearer ${workerToken}`)
+      .send({ row_num: 1, col_num: 1 });
+    expect(res.status).toBe(403);
+  });
+
+  test('400 PUT /locations/:id requires name', async () => {
+    const res = await request(app)
+      .put('/locations/1')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ row_num: 2, col_num: 1 });  // missing name
+    expect(res.status).toBe(400);
+  });
+});
+
+describe('DELETE /locations/:id', () => {
+  test('403 for non-admin', async () => {
+    const res = await request(app)
+      .delete('/locations/1')
+      .set('Authorization', `Bearer ${workerToken}`);
+    expect(res.status).toBe(403);
+  });
+
+  test('200 admin can delete location', async () => {
+    db.query
+      .mockResolvedValueOnce([[{ id: 1, email: 'admin@example.com', role: 'Admin' }], []])
+      .mockResolvedValueOnce([[], []])   // schema probe
+      .mockResolvedValueOnce([{ affectedRows: 1 }, []]);
+    const res = await request(app)
+      .delete('/locations/1')
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(res.status).toBe(200);
+  });
+});
+
+// ─── Tasks — admin CRUD ────────────────────────────────────────────────────
+
+describe('POST /tasks (admin create)', () => {
+  test('403 for non-admin', async () => {
+    const res = await request(app)
+      .post('/tasks')
+      .set('Authorization', `Bearer ${workerToken}`)
+      .send({ name: 'T1', type: 'picking', priority: 2 });
+    // workerToken auth calls db.query so set up a mock for it
+    expect(res.status).toBe(403);
+  });
+
+  test('400 for missing name', async () => {
+    const res = await request(app)
+      .post('/tasks')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ type: 'picking', priority: 2 });
+    expect(res.status).toBe(400);
+  });
+
+  test('400 for invalid type', async () => {
+    const res = await request(app)
+      .post('/tasks')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: 'T1', type: 'invalid', priority: 2 });
+    expect(res.status).toBe(400);
+  });
+
+  test('400 for priority out of range', async () => {
+    const res = await request(app)
+      .post('/tasks')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: 'T1', type: 'picking', priority: 9 });
+    expect(res.status).toBe(400);
+  });
+
+  test('201 admin can create a task', async () => {
+    // Auth (db.query) → getConnection for INSERT → tasks.js getUserIsActiveSelectExpr (2 probes) → db.query SELECT
+    const taskRow = {
+      task_id: 20, task_name: 'New Task', task_type: 'picking', task_source_id: null,
+      task_assigned_user: null, task_status: 'pending', task_priority: 2,
+      task_deadline: null, task_updated_at: null, task_created_at: null,
+      user_id: null, user_email: null, user_role: null, user_is_active: null, user_last_login: null,
+      task_item_id: null, task_item_task_id: null, requested_quantity: null, picked_quantity: null,
+      task_item_status: null, item_id: null, item_name: null, barcode: null, description: null,
+      item_quantity: null, category_id: null, category_name: null, category_size_class: null,
+      category_min_stock_level: null, location_id: null, location_row_num: null, location_col_num: null,
+      location_shelf_level: null, location_is_xl: null, location_code: null, location_is_active: null,
+    };
+    db.query
+      .mockResolvedValueOnce([[{ id: 1, email: 'admin@example.com', role: 'Admin' }], []])  // auth
+      .mockResolvedValueOnce([[{ id: 1 }], []])   // getUserIsActiveSelectExpr probe is_active
+      .mockResolvedValueOnce([[{ id: 1 }], []])   // getUserIsActiveSelectExpr probe isActive
+      .mockResolvedValueOnce([[taskRow], []]);      // getTaskByIdForUser select
+
+    const connection = createMockConnection([
+      [{ insertId: 20 }, []],  // INSERT task
+    ]);
+    db.getConnection.mockResolvedValueOnce(connection);
+
+    const res = await request(app)
+      .post('/tasks')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: 'New Task', type: 'picking', priority: 2 });
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({ id: 20, name: 'New Task', type: 'picking' });
+  });
+});
+
+describe('PUT /tasks/:id (admin update)', () => {
+  test('403 for non-admin', async () => {
+    const res = await request(app)
+      .put('/tasks/1')
+      .set('Authorization', `Bearer ${workerToken}`)
+      .send({ name: 'Updated' });
+    expect(res.status).toBe(403);
+  });
+
+  test('400 for no fields to update', async () => {
+    const res = await request(app)
+      .put('/tasks/1')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({});
+    expect(res.status).toBe(400);
+  });
+
+  test('200 admin can update task name', async () => {
+    db.query
+      .mockResolvedValueOnce([[{ id: 1, email: 'admin@example.com', role: 'Admin' }], []])
+      .mockResolvedValueOnce([{ affectedRows: 1 }, []])
+      .mockResolvedValueOnce([[{ id: 1 }], []])   // getUserIsActiveSelectExpr probe is_active
+      .mockResolvedValueOnce([[{ id: 1 }], []])   // getUserIsActiveSelectExpr probe isActive
+      .mockResolvedValueOnce([[{
+        task_id: 1, task_name: 'Updated Name', task_type: 'picking', task_source_id: null,
+        task_assigned_user: null, task_status: 'pending', task_priority: 2,
+        task_deadline: null, task_updated_at: null, task_created_at: null,
+        user_id: null, user_email: null, user_role: null, user_is_active: null, user_last_login: null,
+        task_item_id: null, task_item_task_id: null, requested_quantity: null, picked_quantity: null,
+        task_item_status: null, item_id: null, item_name: null, barcode: null, description: null,
+        item_quantity: null, category_id: null, category_name: null, category_size_class: null,
+        category_min_stock_level: null, location_id: null, location_row_num: null, location_col_num: null,
+        location_shelf_level: null, location_is_xl: null, location_code: null, location_is_active: null,
+      }], []]);
+    const res = await request(app)
+      .put('/tasks/1')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: 'Updated Name' });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ id: 1, name: 'Updated Name' });
+  });
+});
+
+describe('DELETE /tasks/:id (admin delete)', () => {
+  test('403 for non-admin', async () => {
+    const res = await request(app)
+      .delete('/tasks/1')
+      .set('Authorization', `Bearer ${workerToken}`);
+    expect(res.status).toBe(403);
+  });
+
+  test('404 when task does not exist', async () => {
+    db.query
+      .mockResolvedValueOnce([[{ id: 1, email: 'admin@example.com', role: 'Admin' }], []])
+      .mockResolvedValueOnce([{ affectedRows: 0 }, []]);
+    const res = await request(app)
+      .delete('/tasks/999')
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(res.status).toBe(404);
+  });
+
+  test('200 admin can delete task', async () => {
+    db.query
+      .mockResolvedValueOnce([[{ id: 1, email: 'admin@example.com', role: 'Admin' }], []])
+      .mockResolvedValueOnce([{ affectedRows: 1 }, []]);
+    const res = await request(app)
+      .delete('/tasks/5')
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ message: expect.stringMatching(/deleted/i), taskId: 5 });
+  });
+});
+
+// ─── Task item exception ───────────────────────────────────────────────────
+
+describe('POST /api/tasks/:taskId/items/:itemId/exception', () => {
+  test('400 when missing required fields', async () => {
+    const res = await request(app)
+      .post('/api/tasks/1/items/1/exception')
+      .set('Authorization', `Bearer ${workerToken}`)
+      .send({});
+    expect(res.status).toBe(400);
+  });
+
+  test('400 for invalid reason', async () => {
+    const res = await request(app)
+      .post('/api/tasks/1/items/1/exception')
+      .set('Authorization', `Bearer ${workerToken}`)
+      .send({ locationId: 1, pickedQuantity: 2, missingQuantity: 1, reason: 'unknown' });
+    expect(res.status).toBe(400);
+  });
+
+  test('404 when task item does not exist', async () => {
+    const connection = createMockConnection([
+      [[], []],
+    ]);
+    db.getConnection.mockResolvedValueOnce(connection);
+
+    const res = await request(app)
+      .post('/api/tasks/1/items/999/exception')
+      .set('Authorization', `Bearer ${workerToken}`)
+      .send({ locationId: 3, pickedQuantity: 0, missingQuantity: 2, reason: 'shortage' });
+    expect(res.status).toBe(404);
+  });
+});
+
+// ─── Task accept-shortage ─────────────────────────────────────────────────
+
+describe('PUT /tasks/:taskId/items/:itemId/accept-shortage', () => {
+  test('403 for worker', async () => {
+    const res = await request(app)
+      .put('/tasks/1/items/1/accept-shortage')
+      .set('Authorization', `Bearer ${workerToken}`);
+    expect(res.status).toBe(403);
+  });
+
+  test('404 when task item not found', async () => {
+    db.query
+      .mockResolvedValueOnce([[{ id: 1, email: 'supervisor@example.com', role: 'Supervisor' }], []])
+      .mockResolvedValueOnce([{ affectedRows: 0 }, []]);
+    const res = await request(app)
+      .put('/tasks/1/items/999/accept-shortage')
+      .set('Authorization', `Bearer ${supervisorToken}`);
+    expect(res.status).toBe(404);
+  });
+
+  test('200 supervisor can accept shortage', async () => {
+    db.query
+      .mockResolvedValueOnce([[{ id: 1, email: 'supervisor@example.com', role: 'Supervisor' }], []])
+      .mockResolvedValueOnce([{ affectedRows: 1 }, []])
+      .mockResolvedValueOnce([[{ total: 2, done: 1 }], []]);
+    const res = await request(app)
+      .put('/tasks/1/items/1/accept-shortage')
+      .set('Authorization', `Bearer ${supervisorToken}`);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ taskId: 1, itemId: 1 });
+  });
+});
+
+// ─── Material Requests ────────────────────────────────────────────────────
+
+describe('POST /material-requests', () => {
+  test('401 without token', async () => {
+    const res = await request(app)
+      .post('/material-requests')
+      .send({ line: 'LINE-A', items: [{ itemId: 1, quantity: 2 }] });
+    expect(res.status).toBe(401);
+  });
+
+  test('400 when line is missing', async () => {
+    const res = await request(app)
+      .post('/material-requests')
+      .set('Authorization', `Bearer ${workerToken}`)
+      .send({ items: [{ itemId: 1, quantity: 2 }] });
+    expect(res.status).toBe(400);
+  });
+
+  test('400 when items array is empty', async () => {
+    const res = await request(app)
+      .post('/material-requests')
+      .set('Authorization', `Bearer ${workerToken}`)
+      .send({ line: 'LINE-A', items: [] });
+    expect(res.status).toBe(400);
+  });
+
+  test('201 creates material request', async () => {
+    // Auth db.query + tasks schema probe (db.query) + getConnection for transaction
+    db.query
+      .mockResolvedValueOnce([[{ id: 1, email: 'worker@example.com', role: 'Worker' }], []])
+      .mockResolvedValueOnce([[], []]);  // getTasksSchemaCapabilities probe
+
+    const connection = createMockConnection([
+      [[{ id: 1 }], []],    // items exist check
+      [{ insertId: 7 }, []], // insert task
+      [[], []],              // insert task_item
+    ]);
+    db.getConnection.mockResolvedValueOnce(connection);
+
+    const res = await request(app)
+      .post('/material-requests')
+      .set('Authorization', `Bearer ${workerToken}`)
+      .send({ line: 'LINE-A', items: [{ itemId: 1, quantity: 3 }], priority: 'normal' });
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({ id: 7, line: 'LINE-A', status: 'pending' });
+  });
+});
+
+describe('GET /material-requests', () => {
+  test('401 without token', async () => {
+    const res = await request(app).get('/material-requests');
+    expect(res.status).toBe(401);
+  });
+
+  test('200 returns array', async () => {
+    // Auth query + getTasksSchemaCapabilities (1 probe) + list query
+    db.query
+      .mockResolvedValueOnce([[{ id: 1, email: 'admin@example.com', role: 'Admin' }], []])
+      .mockResolvedValueOnce([[{ id: 1 }], []])   // getTasksSchemaCapabilities probe
+      .mockResolvedValueOnce([[], []]);            // tasks list (empty)
+    const res = await request(app)
+      .get('/material-requests?line=LINE-A')
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+  });
+});
+
+describe('GET /material-requests/all', () => {
+  test('403 for non-admin', async () => {
+    const res = await request(app)
+      .get('/material-requests/all')
+      .set('Authorization', `Bearer ${workerToken}`);
+    expect(res.status).toBe(403);
+  });
+
+  test('200 admin gets all material requests', async () => {
+    db.query
+      .mockResolvedValueOnce([[{ id: 1, email: 'admin@example.com', role: 'Admin' }], []])
+      .mockResolvedValueOnce([[{ id: 1 }], []])  // schema probe
+      .mockResolvedValueOnce([[], []]);           // tasks list
+    const res = await request(app)
+      .get('/material-requests/all')
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+  });
+});
+
+describe('GET /material-requests/metrics', () => {
+  test('403 for non-admin', async () => {
+    const res = await request(app)
+      .get('/material-requests/metrics')
+      .set('Authorization', `Bearer ${workerToken}`);
+    expect(res.status).toBe(403);
+  });
+
+  test('200 admin gets metrics', async () => {
+    db.query
+      .mockResolvedValueOnce([[{ id: 1, email: 'admin@example.com', role: 'Admin' }], []])
+      .mockResolvedValueOnce([[{ active: 3, urgent: 1 }], []]);
+    const res = await request(app)
+      .get('/material-requests/metrics')
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(res.status).toBe(200);
+  });
+});
+
+describe('GET /material-requests/:requestId', () => {
+  test('401 without token', async () => {
+    const res = await request(app).get('/material-requests/1');
+    expect(res.status).toBe(401);
+  });
+
+  test('404 when request does not exist', async () => {
+    db.query
+      .mockResolvedValueOnce([[{ id: 1, email: 'admin@example.com', role: 'Admin' }], []])
+      .mockResolvedValueOnce([[{ id: 1 }], []])  // schema probe
+      .mockResolvedValueOnce([[], []]);           // empty task rows
+    const res = await request(app)
+      .get('/material-requests/999')
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(res.status).toBe(404);
+  });
+});
+
+describe('PUT /material-requests/:requestId/assign', () => {
+  test('403 for non-admin', async () => {
+    const res = await request(app)
+      .put('/material-requests/1/assign')
+      .set('Authorization', `Bearer ${workerToken}`)
+      .send({ userId: 2 });
+    expect(res.status).toBe(403);
+  });
+
+  test('404 when request not found', async () => {
+    db.query
+      .mockResolvedValueOnce([[{ id: 1, email: 'admin@example.com', role: 'Admin' }], []])
+      .mockResolvedValueOnce([[{ id: 1 }], []])         // schema probe
+      .mockResolvedValueOnce([{ affectedRows: 0 }, []]); // update returns 0 rows
+    const res = await request(app)
+      .put('/material-requests/999/assign')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ assignedUserId: null });
+    expect(res.status).toBe(404);
+  });
+});
+
+describe('PUT /material-requests/:requestId/status', () => {
+  test('403 for non-admin', async () => {
+    const res = await request(app)
+      .put('/material-requests/1/status')
+      .set('Authorization', `Bearer ${workerToken}`)
+      .send({ status: 'delivered' });
+    expect(res.status).toBe(403);
+  });
+
+  test('400 for invalid status', async () => {
+    const res = await request(app)
+      .put('/material-requests/1/status')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ status: 'done' });
+    expect(res.status).toBe(400);
+  });
+});
+
+describe('POST /material-requests/:requestId/cancel', () => {
+  test('401 without token', async () => {
+    const res = await request(app).post('/material-requests/1/cancel');
+    expect(res.status).toBe(401);
+  });
+
+  test('404 when request not found', async () => {
+    db.query
+      .mockResolvedValueOnce([[{ id: 1, email: 'worker@example.com', role: 'Worker' }], []])
+      .mockResolvedValueOnce([[{ id: 1 }], []])  // schema probe
+      .mockResolvedValueOnce([[], []]);            // empty task rows → 404
+    const res = await request(app)
+      .post('/material-requests/999/cancel')
+      .set('Authorization', `Bearer ${workerToken}`);
+    expect(res.status).toBe(404);
+  });
+});
+
+describe('DELETE /material-requests/:requestId', () => {
+  test('403 for non-admin', async () => {
+    const res = await request(app)
+      .delete('/material-requests/1')
+      .set('Authorization', `Bearer ${workerToken}`);
+    expect(res.status).toBe(403);
+  });
+
+  test('404 when request does not exist', async () => {
+    db.query
+      .mockResolvedValueOnce([[{ id: 1, email: 'admin@example.com', role: 'Admin' }], []])
+      .mockResolvedValueOnce([[{ id: 1 }], []])        // schema probe
+      .mockResolvedValueOnce([{ affectedRows: 0 }, []]); // delete returns 0
+    const res = await request(app)
+      .delete('/material-requests/999')
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(res.status).toBe(404);
+  });
+});
+
+// ─── Damage Reports GET + review ──────────────────────────────────────────
+
+describe('GET /damage-reports', () => {
+  test('403 for worker', async () => {
+    const res = await request(app)
+      .get('/damage-reports')
+      .set('Authorization', `Bearer ${workerToken}`);
+    expect(res.status).toBe(403);
+  });
+
+  test('200 supervisor gets all damage reports', async () => {
+    db.query.mockResolvedValue([[{ id: 1, email: 'supervisor@example.com', role: 'Supervisor' }], []]);
+    const res = await request(app)
+      .get('/damage-reports')
+      .set('Authorization', `Bearer ${supervisorToken}`);
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+  });
+});
+
+describe('PUT /damage-reports/:id/status', () => {
+  test('403 for worker', async () => {
+    const res = await request(app)
+      .put('/damage-reports/1/status')
+      .set('Authorization', `Bearer ${workerToken}`)
+      .send({ status: 'approved' });
+    expect(res.status).toBe(403);
+  });
+
+  test('400 for invalid status', async () => {
+    const res = await request(app)
+      .put('/damage-reports/1/status')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ status: 'done' });
+    expect(res.status).toBe(400);
+  });
+
+  test('404 when report not found', async () => {
+    db.query
+      .mockResolvedValueOnce([[{ id: 1, email: 'admin@example.com', role: 'Admin' }], []])
+      .mockResolvedValueOnce([{ affectedRows: 0 }, []]);  // UPDATE returns 0 rows
+    const res = await request(app)
+      .put('/damage-reports/999/status')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ status: 'approved' });
+    expect(res.status).toBe(404);
+  });
+
+  test('200 admin can approve damage report', async () => {
+    db.query
+      .mockResolvedValueOnce([[{ id: 1, email: 'admin@example.com', role: 'Admin' }], []])
+      .mockResolvedValueOnce([{ affectedRows: 1 }, []])
+      .mockResolvedValueOnce([[{ id: 5, status: 'approved', description: 'broken', reported_by: 2, reviewed_by: 1, review_note: 'Confirmed', created_at: null, updated_at: null }], []]);
+    const res = await request(app)
+      .put('/damage-reports/5/status')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ status: 'approved', review_note: 'Confirmed' });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ id: 5, status: 'approved' });
+  });
+});
+
+// ─── Simulator ────────────────────────────────────────────────────────────
+
+describe('Simulator endpoints', () => {
+  test('GET /simulator/status requires Admin', async () => {
+    const res = await request(app)
+      .get('/simulator/status')
+      .set('Authorization', `Bearer ${workerToken}`);
+    expect(res.status).toBe(403);
+  });
+
+  test('GET /simulator/status returns state for admin', async () => {
+    const res = await request(app)
+      .get('/simulator/status')
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty('delay');
+  });
+
+  test('POST /simulator/delay 403 for non-admin', async () => {
+    const res = await request(app)
+      .post('/simulator/delay')
+      .set('Authorization', `Bearer ${workerToken}`)
+      .send({ enabled: true, ms: 1000 });
+    expect(res.status).toBe(403);
+  });
+
+  test('POST /simulator/delay 200 accepts any ms, ignores out-of-range', async () => {
+    const res = await request(app)
+      .post('/simulator/delay')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ enabled: true, ms: 99999 });
+    // the route ignores invalid ms, always returns 200
+    expect(res.status).toBe(200);
+  });
+
+  test('POST /simulator/delay 200 sets delay', async () => {
+    const res = await request(app)
+      .post('/simulator/delay')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ enabled: true, ms: 500 });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ delay: { enabled: true, ms: 500 } });
+  });
+
+  test('POST /simulator/block-user 403 for non-admin', async () => {
+    const res = await request(app)
+      .post('/simulator/block-user')
+      .set('Authorization', `Bearer ${workerToken}`)
+      .send({ email: 'x@x.com', blocked: true });
+    expect(res.status).toBe(403);
+  });
+
+  test('POST /simulator/block-user 400 for invalid email', async () => {
+    const res = await request(app)
+      .post('/simulator/block-user')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ email: 'not-valid', blocked: true });
+    expect(res.status).toBe(400);
+  });
+
+  test('POST /simulator/block-user 200 blocks user', async () => {
+    const res = await request(app)
+      .post('/simulator/block-user')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ email: 'target@example.com', blocked: true });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ email: 'target@example.com', blocked: true });
+  });
+
+  test('POST /simulator/nuke 403 for non-admin', async () => {
+    const res = await request(app)
+      .post('/simulator/nuke')
+      .set('Authorization', `Bearer ${workerToken}`);
+    expect(res.status).toBe(403);
+  });
+
+  test('POST /simulator/nuke 200 for admin', async () => {
+    db.query.mockResolvedValueOnce([[{ id: 1, email: 'admin@example.com', role: 'Admin' }], []]);
+    const connection = createMockConnection([
+      [{ affectedRows: 0 }, []],  // delete tasks
+      [{ affectedRows: 0 }, []],  // delete items
+      [{ affectedRows: 0 }, []],  // delete damage_reports
+    ]);
+    db.getConnection.mockResolvedValueOnce(connection);
+    const res = await request(app)
+      .post('/simulator/nuke')
+      .set('Authorization', `Bearer ${adminToken}`);
+    expect(res.status).toBe(200);
+  });
+
+  test('POST /simulator/spawn-task 400 when items missing', async () => {
+    const res = await request(app)
+      .post('/simulator/spawn-task')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: '[FAKER] Test', type: 'picking', priority: 2 });
+    expect(res.status).toBe(400);
+  });
+});
+

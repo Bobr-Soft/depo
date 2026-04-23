@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { StyleSheet, TouchableOpacity } from "react-native";
 import { router } from "expo-router";
 import { H2, Text, YStack, XStack, Button, Card, ScrollView, Spinner, Separator, Input } from "@repo/ui";
 import { RefreshCw, ArrowLeft, WifiOff, AlertCircle, Clock, Package, CheckCircle2, Plus, Trash2 } from "@tamagui/lucide-icons";
@@ -58,6 +59,8 @@ export default function NewPickingScreen() {
   const [draftItems, setDraftItems] = useState<DraftItem[]>([createDraftItem()]);
 
   const syncStatus = useSyncStatus();
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isSelectingRef = useRef(false);
 
   const unassignedTasks = useMemo(() => {
     return tasks
@@ -154,9 +157,38 @@ export default function NewPickingScreen() {
     );
   }
 
+  function handleSearchChange(key: string, text: string) {
+    setDraftItems((prev) =>
+      prev.map((item) =>
+        item.key === key
+          ? { ...item, searchQuery: text, item_id: text.trim() ? item.item_id : "", showDropdown: false }
+          : item
+      )
+    );
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    if (text.trim().length >= 1) {
+      searchTimerRef.current = setTimeout(() => {
+        setDraftItems((prev) =>
+          prev.map((item) => (item.key === key ? { ...item, showDropdown: true } : item))
+        );
+      }, 250);
+    }
+  }
+
+  function handleSearchBlur(key: string) {
+    setTimeout(() => {
+      if (!isSelectingRef.current) {
+        setDraftItems((prev) =>
+          prev.map((item) => (item.key === key ? { ...item, showDropdown: false } : item))
+        );
+      }
+      isSelectingRef.current = false;
+    }, 200);
+  }
+
   function getFilteredItems(query: string): ApiItem[] {
     const trimmed = query.trim().toLowerCase();
-    if (!trimmed) return availableItems;
+    if (!trimmed) return [];
     return availableItems.filter(
       (item) =>
         item.name.toLowerCase().includes(trimmed) ||
@@ -261,10 +293,10 @@ export default function NewPickingScreen() {
         return;
       }
 
-      const createdTask = await adminCreateTask(payload);
-      setNotice(`Feladat létrehozva: ${createdTask.source_id ?? createdTask.name}`);
+      await adminCreateTask(payload);
       resetCreateForm();
-      router.replace({ pathname: "/picking/[id]", params: { id: String(createdTask.id) } });
+      await refreshTasks();
+      router.replace("/picking");
     } catch (createError) {
       const message = createError instanceof Error ? createError.message : "A feladat létrehozása közben hiba történt.";
       setError(message.includes("403") ? "Nincs jogosultság új feladat létrehozásához." : message);
@@ -275,9 +307,7 @@ export default function NewPickingScreen() {
 
   useEffect(() => {
     fetchTasks();
-    if (syncStatus.isOnline) {
-      fetchItems();
-    }
+    fetchItems();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -321,7 +351,7 @@ export default function NewPickingScreen() {
 
       <Separator borderColor="$color4" marginBottom="$2" />
 
-      <ScrollView flex={1} contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
+      <ScrollView flex={1} contentContainerStyle={{ padding: 16, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
         <YStack gap="$4">
           <Card backgroundColor="$color2" borderRadius="$4" padding="$4" borderWidth={1} borderColor="$color4">
             <YStack gap="$3">
@@ -361,20 +391,16 @@ export default function NewPickingScreen() {
 
                 {draftItems.map((draft) => {
                   const filtered = getFilteredItems(draft.searchQuery);
+                  const showDropdown = draft.showDropdown && draft.searchQuery.trim().length >= 1;
                   return (
                     <YStack key={draft.key} gap="$1">
                       <XStack gap="$2" alignItems="center">
                         <YStack flex={1}>
                           <Input
-                            placeholder="Termék keresése..."
+                            placeholder="Termék keresése (név, ID, vonalkód)..."
                             value={draft.searchQuery}
-                            onChangeText={(text: string) => {
-                              updateDraftItem(draft.key, "searchQuery", text);
-                              updateDraftItem(draft.key, "showDropdown", true as any);
-                              // If user clears the field, clear item_id too
-                              if (!text.trim()) updateDraftItem(draft.key, "item_id", "");
-                            }}
-                            onFocus={() => updateDraftItem(draft.key, "showDropdown", true as any)}
+                            onChangeText={(text: string) => handleSearchChange(draft.key, text)}
+                            onBlur={() => handleSearchBlur(draft.key)}
                           />
                         </YStack>
                         <Input
@@ -393,26 +419,34 @@ export default function NewPickingScreen() {
                           disabled={draftItems.length <= 1}
                         />
                       </XStack>
-                      {draft.showDropdown && filtered.length > 0 && (
-                        <YStack backgroundColor="$color2" borderWidth={1} borderColor="$color5" borderRadius="$3" maxHeight={150} overflow="hidden">
-                          <ScrollView nestedScrollEnabled>
-                            {filtered.slice(0, 20).map((item) => (
-                              <Button
-                                key={item.id}
-                                size="$3"
-                                backgroundColor="transparent"
-                                justifyContent="flex-start"
-                                borderRadius={0}
-                                borderBottomWidth={1}
-                                borderBottomColor="$color3"
-                                onPress={() => selectItemForDraft(draft.key, item)}
-                              >
-                                <Text fontSize={13} color="$color11" numberOfLines={1}>
-                                  #{item.id} — {item.name}{item.barcode ? ` (${item.barcode})` : ""}
-                                </Text>
-                              </Button>
-                            ))}
-                          </ScrollView>
+                      {showDropdown && (
+                        <YStack backgroundColor="$color2" borderWidth={1} borderColor="$color5" borderRadius="$3" maxHeight={200} overflow="hidden">
+                          {filtered.length === 0 ? (
+                            <YStack padding="$3" alignItems="center">
+                              <Text fontSize={13} color="$color9">Nincs találat</Text>
+                            </YStack>
+                          ) : (
+                            <ScrollView nestedScrollEnabled keyboardShouldPersistTaps="always">
+                              {filtered.slice(0, 25).map((item) => (
+                                <TouchableOpacity
+                                  key={item.id}
+                                  activeOpacity={0.6}
+                                  onPressIn={() => {
+                                    isSelectingRef.current = true;
+                                    selectItemForDraft(draft.key, item);
+                                  }}
+                                  style={styles.dropdownItem}
+                                >
+                                  <Text fontSize={13} fontWeight="600" color="$color12" numberOfLines={1}>
+                                    #{item.id} {item.name}
+                                  </Text>
+                                  <Text fontSize={11} color="$color9" numberOfLines={1}>
+                                    {[item.category, item.location, item.barcode ? `Vonalkód: ${item.barcode}` : null].filter(Boolean).join(" · ") || "Nincs részlet"}
+                                  </Text>
+                                </TouchableOpacity>
+                              ))}
+                            </ScrollView>
+                          )}
                         </YStack>
                       )}
                       {draft.item_id ? (
@@ -520,3 +554,12 @@ export default function NewPickingScreen() {
     </YStack>
   );
 }
+
+const styles = StyleSheet.create({
+  dropdownItem: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(128,128,128,0.15)',
+  },
+});

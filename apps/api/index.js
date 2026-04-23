@@ -1,6 +1,8 @@
 const express = require('express');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
+const swaggerUi = require('swagger-ui-express');
+const swaggerDocument = require('./swagger');
 const db = require('./db');
 const { getTaskByIdForUser, getTasksForUser } = require('./tasks');
 const { allocatePutawayLocation } = require('./wms');
@@ -50,6 +52,10 @@ app.use((req, _res, next) => {
     pathOnly === '/api'
     || pathOnly === '/api/'
     || pathOnly === '/api/inbound/putaway'
+    || pathOnly === '/api/docs'
+    || pathOnly === '/api/docs/'
+    || pathOnly === '/api/docs/openapi.json'
+    || pathOnly.startsWith('/api/docs/')
     || /^\/api\/tasks\/[^/]+$/.test(pathOnly)
     || /^\/api\/tasks\/[^/]+\/items\/[^/]+\/exception$/.test(pathOnly);
 
@@ -595,6 +601,11 @@ function requireSupervisorOrAdmin(req, res, next) {
   }
   next();
 }
+
+// ─── Swagger API Docs ─────────────────────────────────────────────────────────
+app.use('/api/docs', swaggerUi.serve);
+app.get('/api/docs', swaggerUi.setup(swaggerDocument, { explorer: true }));
+app.get('/api/docs/openapi.json', (_req, res) => res.json(swaggerDocument));
 
 app.get('/api', (_req, res) => {
   res.json({
@@ -1449,7 +1460,7 @@ function getMaterialRequestTaskFilter(prefix, capabilities) {
 
 // Create material request task from web picking dashboard
 app.post('/material-requests', authenticateJWT, async (req, res) => {
-  const { line, priority, items } = req.body;
+  const { line, priority, items, deadline } = req.body;
 
   if (!isValidString(line, 64)) {
     return res.status(400).json({ message: 'Invalid line value' });
@@ -1499,10 +1510,26 @@ app.post('/material-requests', authenticateJWT, async (req, res) => {
     const requestPriority = normalizeMaterialRequestPriority(priority);
     const taskName = `Anyagigénylés - ${line}`;
 
+    // Accept client-provided deadline or compute from priority
+    let deadlineValue = null;
+    if (deadline) {
+      const parsed = new Date(deadline);
+      deadlineValue = Number.isNaN(parsed.getTime()) ? null : parsed;
+    }
+    if (!deadlineValue) {
+      const d = new Date();
+      if (requestPriority === 'urgent') {
+        d.setHours(d.getHours() + 1);
+      } else {
+        d.setDate(d.getDate() + 2);
+      }
+      deadlineValue = d;
+    }
+
     const [taskResult] = await connection.query(
       `INSERT INTO tasks (name, type, source_id, assigned_user, status, priority, deadline, created_at, updated_at)
-       VALUES (?, ?, ?, NULL, 'pending', ?, NULL, NOW(), NOW())`,
-      [taskName, materialRequestTaskType, line, requestPriority]
+       VALUES (?, ?, ?, NULL, 'pending', ?, ?, NOW(), NOW())`,
+      [taskName, materialRequestTaskType, line, requestPriority, deadlineValue]
     );
 
     const taskId = taskResult.insertId;
@@ -3913,3 +3940,4 @@ if (require.main === module) {
 }
 
 module.exports = app;
+module.exports.schemaCaches = { itemsSchemaCache, usersSchemaCache, tasksSchemaCache, categoriesSchemaCache, locationsSchemaCache };

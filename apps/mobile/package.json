@@ -1,19 +1,21 @@
 {
-  "name": "depo-mobile",
+  "name": "mobile",
   "main": "index.js",
   "version": "1.0.0",
   "scripts": {
-    "start": "expo start --go",
+    "start": "expo start --offline --go",
+    "dev": "expo start --offline --go",
     "reset-project": "node ./scripts/reset-project.js",
-    "android": "expo start --android --dev-client",
-    "ios": "expo start --ios --dev-client",
-    "web": "expo start --web",
+    "android": "expo start --offline --android --dev-client",
+    "ios": "expo start --offline --ios --dev-client",
+    "web": "expo start --offline --web",
     "lint": "expo lint",
     "build:ios": "eas build --platform ios --profile preview",
     "build:ios:simulator": "eas build --platform ios --profile development",
     "build:android": "eas build --platform android --profile preview",
     "build:all": "eas build --platform all --profile preview",
-    "build:local": "eas build --platform all --profile development"
+    "build:local": "eas build --platform all --profile development",
+    "generate-icons": "node scripts/generate-icons.mjs"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
@@ -63,6 +65,7 @@
     "eslint-config-expo": "~10.0.0",
     "eslint-import-resolver-typescript": "^4.4.4",
     "expo-dev-client": "^6.0.20",
+    "sharp": "^0.34.5",
     "typescript": "~5.9.2"
   },
   "private": true

@@ -2,14 +2,15 @@
   "name": "depo",
   "private": true,
   "scripts": {
+    "start": "turbo run start",
     "build": "turbo run build",
     "dev": "turbo run dev",
     "lint": "turbo run lint",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "check-types": "turbo run check-types",
-    "mobile:ios:device:add": "yarn workspace depo-mobile exec eas device:create",
-    "mobile:ios:preview": "yarn workspace depo-mobile build:ios",
-    "mobile:ios:last": "yarn workspace depo-mobile exec eas build:list --platform ios --limit 1"
+    "mobile:ios:device:add": "yarn workspace mobile exec eas device:create",
+    "mobile:ios:preview": "yarn workspace mobile build:ios",
+    "mobile:ios:last": "yarn workspace mobile exec eas build:list --platform ios --limit 1"
   },
   "devDependencies": {
     "prettier": "^3.7.4",
