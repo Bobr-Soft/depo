@@ -51,6 +51,8 @@ interface LocationRow {
 
 interface PositionLocationRow {
   id: number;
+  name: string;
+  description?: string | null;
   row_num?: number | null;
   col_num?: number | null;
   shelf_level?: number | null;
@@ -69,6 +71,11 @@ interface LastMoveState {
   fromLocationId: number;
   toLocationId: number;
 }
+
+type TargetResolution = {
+  id: number;
+  locations: LocationRow[];
+};
 
 function num(value: unknown, fallback = 0) {
   const parsed = Number(value);
@@ -132,6 +139,24 @@ function toActiveLabel(value: number | boolean | null | undefined) {
     return 'N/A';
   }
   return Number(value) === 1 ? 'Aktiv' : 'Inaktiv';
+}
+
+function upsertLocations(current: LocationRow[], additions: LocationRow[] | LocationRow) {
+  const incoming = Array.isArray(additions) ? additions : [additions];
+  if (incoming.length === 0) {
+    return current;
+  }
+
+  const byId = new Map<number, LocationRow>();
+  current.forEach((location) => byId.set(location.id, location));
+  incoming.forEach((location) => {
+    if (!location || typeof location.id !== 'number') {
+      return;
+    }
+    byId.set(location.id, { ...byId.get(location.id), ...location });
+  });
+
+  return Array.from(byId.values());
 }
 
 function mapRackLocations(row: number, col: number, locations: LocationRow[], items: RackItem[]): RackLocation[] {
@@ -265,10 +290,11 @@ export default function ManageLocationsPage() {
   const moveItemToLocation = async (
     itemId: number,
     targetLocationId: number,
-    options?: { trackHistory?: boolean; showSuccess?: boolean }
+    options?: { trackHistory?: boolean; showSuccess?: boolean; locations?: LocationRow[] }
   ) => {
     const trackHistory = options?.trackHistory ?? true;
     const showSuccess = options?.showSuccess ?? true;
+    const locationsSnapshot = options?.locations ?? allLocations;
 
     if (isSavingMove) {
       setWarningMessage('Varj, az elozo athelyezes mentese meg folyamatban van.');
@@ -285,8 +311,8 @@ export default function ManageLocationsPage() {
       return false;
     }
 
-    const targetLocation = allLocations.find((location) => location.id === targetLocationId);
-    const sourceLocation = allLocations.find((location) => location.id === currentLocationId);
+    const targetLocation = locationsSnapshot.find((location) => location.id === targetLocationId);
+    const sourceLocation = locationsSnapshot.find((location) => location.id === currentLocationId);
 
     if (targetLocation) {
       const targetCoords = getRackRowCol(targetLocation);
@@ -300,7 +326,7 @@ export default function ManageLocationsPage() {
       );
 
       const targetShelfCount = allItems.filter((item) => {
-        const location = allLocations.find((loc) => loc.id === num(item.location_id, -1));
+        const location = locationsSnapshot.find((loc) => loc.id === num(item.location_id, -1));
         if (!location) {
           return false;
         }
@@ -337,8 +363,11 @@ export default function ManageLocationsPage() {
       );
 
       setAllItems(updatedItems);
+      if (options?.locations) {
+        setAllLocations(options.locations);
+      }
       if (selectedRack) {
-        setRackLocations(mapRackLocations(selectedRack.row, selectedRack.col, allLocations, updatedItems));
+        setRackLocations(mapRackLocations(selectedRack.row, selectedRack.col, locationsSnapshot, updatedItems));
       }
       setError(null);
       if (showSuccess) {
@@ -403,7 +432,11 @@ export default function ManageLocationsPage() {
     }
   };
 
-  const moveManyItemsToLocation = async (itemIds: number[], targetLocationId: number) => {
+  const moveManyItemsToLocation = async (
+    itemIds: number[],
+    targetLocationId: number,
+    locationsOverride?: LocationRow[]
+  ) => {
     if (itemIds.length === 0) {
       return;
     }
@@ -415,6 +448,7 @@ export default function ManageLocationsPage() {
       const moved = await moveItemToLocation(itemId, targetLocationId, {
         trackHistory: false,
         showSuccess: false,
+        locations: locationsOverride,
       });
 
       if (moved) {
@@ -514,10 +548,10 @@ export default function ManageLocationsPage() {
     return sorted[0].id;
   };
 
-  const resolveTargetLocationIdForRack = async (row: number, col: number, itemId: number) => {
+  const resolveTargetLocationIdForRack = async (row: number, col: number, itemId: number): Promise<TargetResolution | null> => {
     const localBest = findBestTargetLocationIdForRack(row, col, itemId);
     if (localBest) {
-      return localBest;
+      return { id: localBest, locations: allLocations };
     }
 
     const movingItem = allItems.find((item) => item.id === itemId);
@@ -529,19 +563,31 @@ export default function ManageLocationsPage() {
         params: { row_num: row, col_num: col },
       });
 
+      const mergedLocations = upsertLocations(allLocations, response.data);
+      if (mergedLocations !== allLocations) {
+        setAllLocations(mergedLocations);
+      }
+
       const picked = pickBestTargetFromRows(response.data, preferredShelf);
       if (picked) {
-        return picked;
+        return { id: picked, locations: mergedLocations };
       }
     } catch (err) {
       console.error('Failed to resolve target rack location via API:', err);
     }
 
     const createShelf = preferredShelf ?? 0;
-    return await createLocationForRackShelf(row, col, createShelf);
+    const created = await createLocationForRackShelf(row, col, createShelf);
+    if (!created) {
+      return null;
+    }
+
+    const mergedLocations = upsertLocations(allLocations, created);
+    setAllLocations(mergedLocations);
+    return { id: created.id, locations: mergedLocations };
   };
 
-  const createLocationForRackShelf = async (row: number, col: number, shelfLevel: number) => {
+  const createLocationForRackShelf = async (row: number, col: number, shelfLevel: number): Promise<LocationRow | null> => {
     const normalizedShelf = Math.max(0, shelfLevel);
     const generatedCode = `${toTwoDigits(row)}-${toTwoDigits(col)}-${toTwoDigits(normalizedShelf)}`;
 
@@ -571,15 +617,10 @@ export default function ManageLocationsPage() {
         is_xl: 0,
       };
 
-      setAllLocations((prev) => {
-        if (prev.some((location) => location.id === createdId)) {
-          return prev;
-        }
-        return [...prev, createdLocation];
-      });
+      setAllLocations((prev) => upsertLocations(prev, createdLocation));
 
       setSuccessMessage(`Uj location letrehozva: ${createdLocation.name}`);
-      return createdId;
+      return createdLocation;
     } catch (err) {
       console.error('Failed to create fallback location:', err);
       return null;
@@ -590,7 +631,7 @@ export default function ManageLocationsPage() {
     row: number,
     col: number,
     displayShelfLevel: number
-  ) => {
+  ): Promise<TargetResolution | null> => {
     const targetRawShelf = useZeroBasedShelf ? displayShelfLevel : displayShelfLevel + 1;
 
     const localCandidates = getLocationsByRack(row, col)
@@ -605,7 +646,7 @@ export default function ManageLocationsPage() {
       });
 
     if (localCandidates.length > 0) {
-      return localCandidates[0].id;
+      return { id: localCandidates[0].id, locations: allLocations };
     }
 
     try {
@@ -613,21 +654,33 @@ export default function ManageLocationsPage() {
         params: { row_num: row, col_num: col },
       });
 
+      const mergedLocations = upsertLocations(allLocations, response.data);
+      if (mergedLocations !== allLocations) {
+        setAllLocations(mergedLocations);
+      }
+
       const shelfMatched = response.data.filter((location) => num(location.shelf_level, -1) === targetRawShelf);
       const bestOnShelf = pickBestTargetFromRows(shelfMatched, targetRawShelf);
       if (bestOnShelf) {
-        return bestOnShelf;
+        return { id: bestOnShelf, locations: mergedLocations };
       }
 
       const fallbackInRack = pickBestTargetFromRows(response.data, targetRawShelf);
       if (fallbackInRack) {
-        return fallbackInRack;
+        return { id: fallbackInRack, locations: mergedLocations };
       }
     } catch (err) {
       console.error('Failed to resolve target shelf location via API:', err);
     }
 
-    return await createLocationForRackShelf(row, col, targetRawShelf);
+    const created = await createLocationForRackShelf(row, col, targetRawShelf);
+    if (!created) {
+      return null;
+    }
+
+    const mergedLocations = upsertLocations(allLocations, created);
+    setAllLocations(mergedLocations);
+    return { id: created.id, locations: mergedLocations };
   };
 
   return (
@@ -850,36 +903,36 @@ export default function ManageLocationsPage() {
                             return;
                           }
 
-                          const targetLocationId = await resolveTargetLocationIdForShelf(
+                          const resolution = await resolveTargetLocationIdForShelf(
                             selectedRack.row,
                             selectedRack.col,
                             level
                           );
 
-                          if (!targetLocationId) {
+                          if (!resolution) {
                             setError('A polcon nem talalhato target location.');
                             return;
                           }
 
-                          await moveItemToLocation(itemId, targetLocationId);
+                          await moveItemToLocation(itemId, resolution.id, { locations: resolution.locations });
                         }}
                         onClick={async () => {
                           if (!selectedRack || !selectedItemId) {
                             return;
                           }
 
-                          const targetLocationId = await resolveTargetLocationIdForShelf(
+                          const resolution = await resolveTargetLocationIdForShelf(
                             selectedRack.row,
                             selectedRack.col,
                             level
                           );
 
-                          if (!targetLocationId) {
+                          if (!resolution) {
                             setError('A polcon nem talalhato target location.');
                             return;
                           }
 
-                          await moveItemToLocation(selectedItemId, targetLocationId);
+                          await moveItemToLocation(selectedItemId, resolution.id, { locations: resolution.locations });
                         }}
                       >
                         {shelfLocations.length === 0 && (
@@ -1117,12 +1170,12 @@ export default function ManageLocationsPage() {
                             key={`rack-drop-${rackKey}`}
                             onClick={async () => {
                               if (selectedItemIds.length > 0) {
-                                const targetLocationId = await resolveTargetLocationIdForRack(rowNum, colNum, selectedItemIds[0]);
-                                if (!targetLocationId) {
+                                const resolution = await resolveTargetLocationIdForRack(rowNum, colNum, selectedItemIds[0]);
+                                if (!resolution) {
                                   setError('A cel rackben nincs target location.');
                                   return;
                                 }
-                                await moveManyItemsToLocation(selectedItemIds, targetLocationId);
+                                await moveManyItemsToLocation(selectedItemIds, resolution.id, resolution.locations);
                                 return;
                               }
 
@@ -1130,13 +1183,13 @@ export default function ManageLocationsPage() {
                                 return;
                               }
 
-                              const targetLocationId = await resolveTargetLocationIdForRack(rowNum, colNum, selectedItemId);
-                              if (!targetLocationId) {
+                              const resolution = await resolveTargetLocationIdForRack(rowNum, colNum, selectedItemId);
+                              if (!resolution) {
                                 setError('A cel rackben nincs target location.');
                                 return;
                               }
 
-                              await moveItemToLocation(selectedItemId, targetLocationId);
+                              await moveItemToLocation(selectedItemId, resolution.id, { locations: resolution.locations });
                             }}
                             onDragOver={(event) => {
                               event.preventDefault();
@@ -1156,13 +1209,13 @@ export default function ManageLocationsPage() {
                                 return;
                               }
 
-                              const targetLocationId = await resolveTargetLocationIdForRack(rowNum, colNum, itemId);
-                              if (!targetLocationId) {
+                              const resolution = await resolveTargetLocationIdForRack(rowNum, colNum, itemId);
+                              if (!resolution) {
                                 setError('A cel rackben nincs target location.');
                                 return;
                               }
 
-                              await moveItemToLocation(itemId, targetLocationId);
+                              await moveItemToLocation(itemId, resolution.id, { locations: resolution.locations });
                             }}
                             sx={{
                               borderRadius: 1,
