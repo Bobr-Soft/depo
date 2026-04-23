@@ -151,6 +151,24 @@ To run the mobile app separately:
 yarn workspace mobile start
 ```
 
+### 7. Open the web dashboard
+
+Open the web UI:
+
+- http://localhost:5173
+
+Login rules:
+
+- You can only sign in with an email that ends with `@petrik.hu`.
+- Even then, the user must be present in the database `users` table (whitelist). If the email is not in the DB, the API will deny login (HTTP 403).
+
+Demo accounts (dev only):
+
+- `bogyo@petrik.hu` / `Kortefa123` (admin)
+- `mez@petrik.hu` / `Almafa123` (worker)
+
+
+
 ## Azure AD setup
 
 Both the web and mobile apps support Azure AD authentication. To enable it:
