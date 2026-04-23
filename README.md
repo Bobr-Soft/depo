@@ -51,7 +51,7 @@ Mind a webes dashboard, mind a mobilalkalmazás HTTP-n keresztül kommunikál az
 - Vonalkód-olvasó a gyors tételt-kereséshez
 - Komissiózási munkafolyamat (feladatok létrehozása, listázása és befejezése)
 - Offline-első működés: az adatok helyi SQLite adatbázisban kerülnek gyorsítótárba, és visszatérő internetkapcsolat esetén szinkronizálódnak
-- Automatikus újrapróbálkozás exponenciális visszalépéssel Render cold startok esetén (legfeljebb 90 másodperces időtúllépés, 3 kísérlet)
+- Automatikus újrapróbálkozás exponenciális visszalépéssel (legfeljebb 90 másodperces időtúllépés, 3 kísérlet)
 - Biztonságos tokentárolás `expo-secure-store` segítségével
 - Sötét/világos témamód (automatikus)
 
@@ -269,7 +269,6 @@ depo/
 | `corepack enable` sikertelen | Futtasd emelt szintű terminálban (Rendszergazda / `sudo`) |
 | Az API „JWT_SECRET is required" hibával leáll | Add hozzá a `JWT_SECRET` változót az `apps/api/.env` fájlhoz |
 | `ER_ACCESS_DENIED_ERROR` MySQL-től | Ellenőrizd a `DB_USER` és `DB_PASSWORD` értékeket az `apps/api/.env` fájlban |
-| Az API 30–90 másodpercet vesz igénybe az első kérésre | Render ingyenes csomag cold start — a mobilalkalmazás automatikusan újrapróbálkozik |
 | `yarn install` „Invalid authentication" hibával sikertelen | Futtasd előbb a `corepack enable` parancsot, vagy töröld a `.yarn/install-state.gz` fájlt és próbáld újra |
 
 ## Közreműködés
