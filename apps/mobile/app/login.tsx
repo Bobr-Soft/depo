@@ -6,7 +6,7 @@ import { login } from '@/services/auth';
 import { deleteUserPhotoUrl, setUserPhotoUrl } from '@/services/secureStorage';
 import { initializeSyncService } from '@/services/sync';
 import * as WebBrowser from 'expo-web-browser';
-import { makeRedirectUri, useAuthRequest } from 'expo-auth-session';
+import { makeRedirectUri, useAuthRequest, exchangeCodeAsync, ResponseType } from 'expo-auth-session';
 
 const azureClientId = process.env.EXPO_PUBLIC_AZURE_CLIENT_ID;
 const azureTenantId = process.env.EXPO_PUBLIC_AZURE_TENANT_ID;
@@ -81,7 +81,8 @@ export default function LoginScreen() {
     {
       clientId: azureClientId ?? '',
       scopes: ['openid', 'profile', 'email', 'offline_access', 'User.Read'],
-      responseType: 'token',
+      responseType: ResponseType.Code,
+      usePKCE: true,
       redirectUri: makeRedirectUri({
         scheme: 'depomobile',
         path: 'redirect',
@@ -154,18 +155,47 @@ export default function LoginScreen() {
 
     if (response.type !== 'success') {
       setAzureLoading(false);
+      if (response.type === 'cancel' || response.type === 'dismiss') {
+        setError('A Microsoft bejelentkezés megszakadt');
+      } else if (response.type === 'error') {
+        setError(`Microsoft hiba: ${response.error?.description ?? response.error?.code ?? 'Ismeretlen hiba'}`);
+      } else {
+        setError(`Sikertelen Microsoft bejelentkezés (${response.type}).`);
+      }
       return;
     }
 
-    const accessToken = response.authentication?.accessToken;
-    if (!accessToken) {
-      setError('Nem érkezett hozzáférési token a Microsofttól.');
+    const code = response.params?.code;
+    if (!code) {
+      setError('Nem érkezett authorization code a Microsofttól.');
       setAzureLoading(false);
       return;
     }
 
-    void completeAzureLogin(accessToken);
-  }, [completeAzureLogin, response]);
+    if (!request?.codeVerifier || !discovery) {
+      setError('Hibás PKCE állapot, próbáld újra.');
+      setAzureLoading(false);
+      return;
+    }
+
+    void (async () => {
+      try {
+        const tokenResponse = await exchangeCodeAsync(
+          {
+            clientId: azureClientId ?? '',
+            code,
+            redirectUri: makeRedirectUri({ scheme: 'depomobile', path: 'redirect' }),
+            extraParams: { code_verifier: request.codeVerifier! },
+          },
+          discovery
+        );
+        void completeAzureLogin(tokenResponse.accessToken);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Token csere sikertelen.');
+        setAzureLoading(false);
+      }
+    })();
+  }, [completeAzureLogin, discovery, request, response]);
 
   async function handleAzureLogin() {
     try {
@@ -182,6 +212,13 @@ export default function LoginScreen() {
       const result = await promptAsync();
       if (result.type !== 'success') {
         setAzureLoading(false);
+        if (result.type === 'cancel' || result.type === 'dismiss') {
+          setError('A Microsoft bejelentkezés megszakadt');
+        } else if (result.type === 'error') {
+          setError(`Microsoft hiba: ${result.error?.description ?? result.error?.code ?? 'Ismeretlen hiba'}`);
+        } else {
+          setError(`Sikertelen Microsoft bejelentkezés (${result.type}).`);
+        }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Sikertelen Microsoft bejelentkezés.');
