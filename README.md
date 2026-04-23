@@ -1,12 +1,12 @@
-# Depo — Digital Ecosystem for Parts & Orders
+# Depo — Digitális Alkatrész- és Rendeléskezelő Rendszer
 
 [![CI](https://github.com/Bobr-Soft/depo/actions/workflows/ci.yml/badge.svg)](https://github.com/Bobr-Soft/depo/actions/workflows/ci.yml)
 [![Node](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](https://nodejs.org/)
 [![Yarn](https://img.shields.io/badge/yarn-4.12.0-blue)](https://yarnpkg.com/)
 
-A full-stack inventory management system built as a Turborepo monorepo. A **REST API** stores data in MySQL, a **React web dashboard** provides admin controls, and an **Expo mobile app** adds barcode scanning with offline-first sync — all sharing code through Yarn workspaces.
+Teljes veremű leltárkezelő rendszer, Turborepo monorepo struktúrában megvalósítva. Egy **REST API** tárolja az adatokat MySQL adatbázisban, egy **React webes dashboard** biztosítja az adminisztrációs felületet, egy **Expo mobilalkalmazás** pedig vonalkód-olvasást és offline-első szinkronizációt tesz lehetővé — mindezt Yarn workspaceken keresztül megosztott kódbázissal.
 
-## Architecture
+## Architektúra
 
 ```
 ┌───────────┐      ┌──────────┐
@@ -26,93 +26,93 @@ A full-stack inventory management system built as a Turborepo monorepo. A **REST
 └────────────────────────────┘
 ```
 
-Both the web dashboard and mobile app communicate with the API over HTTP using JWT tokens for authentication. The mobile app additionally maintains a **local SQLite database** that syncs with the server when connectivity is available, allowing full offline operation.
+Mind a webes dashboard, mind a mobilalkalmazás HTTP-n keresztül kommunikál az API-val, JWT tokenek segítségével hitelesítve. A mobilalkalmazás emellett egy **helyi SQLite adatbázist** tart fenn, amely internetkapcsolat esetén szinkronizálódik a szerverrel, lehetővé téve a teljes offline működést.
 
-## Apps
+## Alkalmazások
 
-| App | Stack | Description |
+| Alkalmazás | Technológia | Leírás |
 |---|---|---|
-| `apps/api` | Node.js · Express 5 · MySQL | REST API with JWT auth & role-based access control |
-| `apps/web` | React 19 · Vite · Material UI | Admin web dashboard with Azure AD login |
-| `apps/mobile` | Expo 54 · React Native · Tamagui | iOS & Android app with barcode scanning & offline sync |
+| `apps/api` | Node.js · Express 5 · MySQL | REST API JWT hitelesítéssel és szerepkör-alapú hozzáférésvezérléssel |
+| `apps/web` | React 19 · Vite · Material UI | Adminisztrációs webes dashboard Azure AD bejelentkezéssel |
+| `apps/mobile` | Expo 54 · React Native · Tamagui | iOS és Android alkalmazás vonalkód-olvasással és offline szinkronizációval |
 
-## Features
+## Funkciók
 
-### Web dashboard (`apps/web`)
-- Inventory: browse, search, add, edit, delete items with barcode support
-- Manage categories, locations, users (admin-only)
-- Renting items workflow
-- Quick actions (batch add/list)
-- CSV export
-- Overview and dashboard pages
-- Azure AD / MSAL authentication
+### Webes dashboard (`apps/web`)
+- Leltárkezelés: tételek böngészése, keresése, hozzáadása, szerkesztése és törlése vonalkód-támogatással
+- Kategóriák, helyszínek és felhasználók kezelése (csak adminisztrátoroknak)
+- Kölcsönzési munkafolyamat
+- Gyorsműveletek (tömeges hozzáadás és listázás)
+- CSV exportálás
+- Áttekintő és összefoglaló oldalak
+- Azure AD / MSAL hitelesítés
 
-### Mobile app (`apps/mobile`)
-- Barcode scanner for fast item lookup
-- Picking workflow (create, list, and complete picking tasks)
-- Offline-first: data is cached in a local SQLite database and synced when back online
-- Automatic retry with exponential backoff for Render cold starts (up to 90s timeout, 3 attempts)
-- Secure token storage via `expo-secure-store`
-- Dark/light mode (automatic)
+### Mobilalkalmazás (`apps/mobile`)
+- Vonalkód-olvasó a gyors tételt-kereséshez
+- Komissiózási munkafolyamat (feladatok létrehozása, listázása és befejezése)
+- Offline-első működés: az adatok helyi SQLite adatbázisban kerülnek gyorsítótárba, és visszatérő internetkapcsolat esetén szinkronizálódnak
+- Automatikus újrapróbálkozás exponenciális visszalépéssel Render cold startok esetén (legfeljebb 90 másodperces időtúllépés, 3 kísérlet)
+- Biztonságos tokentárolás `expo-secure-store` segítségével
+- Sötét/világos témamód (automatikus)
 
 ### API (`apps/api`)
-- JWT-based authentication (1h token expiry)
-- Role-based access control (`admin` / `user`)
-- Endpoints: `/auth`, `/items`, `/categories`, `/locations`, `/users`, `/tasks`
-- Graceful degradation when DB is unreachable
-- Input validation on all write endpoints
+- JWT-alapú hitelesítés (1 órás token-élettartam)
+- Szerepkör-alapú hozzáférésvezérlés (`admin` / `user`)
+- Végpontok: `/auth`, `/items`, `/categories`, `/locations`, `/users`, `/tasks`
+- Graceful degradation elérhetetlen adatbázis esetén
+- Bemeneti érvényesítés minden írási végponton
 
-## Packages
+## Csomagok
 
-| Package | Description |
+| Csomag | Leírás |
 |---|---|
-| `@repo/ui` | Shared Tamagui component library used by the mobile app |
-| `@repo/eslint-config` | Shared ESLint configs |
-| `@repo/typescript-config` | Shared `tsconfig.json` bases |
+| `@repo/ui` | Megosztott Tamagui komponenskönyvtár, amelyet a mobilalkalmazás használ |
+| `@repo/eslint-config` | Megosztott ESLint konfigurációk |
+| `@repo/typescript-config` | Megosztott `tsconfig.json` alápkonfigurációk |
 
-## Prerequisites
+## Előfeltételek
 
 - **Node.js 18+**
-- **Yarn 4** — enabled via corepack (see step 2 below)
-- **MySQL 8** — a running instance with an empty database
-- **[EAS CLI](https://docs.expo.dev/eas/)** — only needed for mobile builds (`npm i -g eas-cli`)
+- **Yarn 4** — corepacken keresztül aktiválható (lásd 2. lépés)
+- **MySQL 8** — futó példány üres adatbázissal
+- **[EAS CLI](https://docs.expo.dev/eas/)** — csak mobilos buildekhez szükséges (`npm i -g eas-cli`)
 
-## Quick start
+## Gyors kezdés
 
-### 1. Clone the repository
+### 1. A repository klónozása
 
 ```sh
 git clone https://github.com/Bobr-Soft/depo.git
 cd depo
 ```
 
-### 2. Enable Yarn 4 via corepack
+### 2. A Yarn 4 aktiválása corepacken keresztül
 
 ```sh
 corepack enable
 ```
 
-> If you see a permissions error, run the command in an elevated terminal (Admin on Windows, `sudo` on macOS/Linux).
+> Jogosultsági hiba esetén futtasd a parancsot emelt szintű terminálban (Windows: Rendszergazdaként, macOS/Linux: `sudo`).
 
-### 3. Install dependencies
+### 3. Függőségek telepítése
 
 ```sh
 yarn install
 ```
 
-This installs dependencies for all apps and packages in the monorepo.
+Ez a monorepo összes alkalmazásának és csomagjának függőségeit telepíti.
 
-### 4. Create a MySQL database
+### 4. MySQL adatbázis létrehozása
 
-Create an empty database — the API will auto-create all tables on first startup:
+Hozz létre egy üres adatbázist — az API az első indításkor automatikusan létrehozza az összes táblát:
 
 ```sql
 CREATE DATABASE depo;
 ```
 
-### 5. Configure environment variables
+### 5. Környezeti változók konfigurálása
 
-**API** — create `apps/api/.env`:
+**API** — hozd létre az `apps/api/.env` fájlt:
 
 ```env
 DB_HOST=localhost
@@ -124,9 +124,9 @@ PORT=4000
 CORS_ORIGINS=http://localhost:5173
 ```
 
-> The API will **refuse to start** if `JWT_SECRET` is not set.
+> Az API **megtagadja az indítást**, ha a `JWT_SECRET` nincs beállítva.
 
-**Web** — create `apps/web/.env`:
+**Web** — hozd létre az `apps/web/.env` fájlt:
 
 ```env
 VITE_API_URL=http://localhost:4000
@@ -135,140 +135,140 @@ VITE_AZURE_TENANT_ID=your-azure-tenant-id
 VITE_AZURE_REDIRECT_URI=http://localhost:5173
 ```
 
-**Mobile** — no build-time `.env` required. The API URL is configured at runtime inside the app (stored in `expo-secure-store`). On first launch, enter the URL on the profile/settings screen.
+**Mobile** — az API URL-je az `EXPO_PUBLIC_API_URL` változón keresztül kerül beállításra az `apps/mobile/.env` fájlban, build időben. Ha az `expo-secure-store`-ba korábban el lett mentve egy érték (pl. korábbi felülírásból), az elsőbbséget élvez; egyébként a build idejű `.env` érték érvényes.
 
-### 6. Start development
+### 6. Fejlesztői szerver indítása
 
 ```sh
 yarn dev
 ```
 
-This launches both the API (http://localhost:4000) and the web dashboard (http://localhost:5173) in parallel via Turborepo.
+Ez párhuzamosan elindítja az API-t (http://localhost:4000) és a webes dashboardot (http://localhost:5173) Turborepon keresztül.
 
-To run the mobile app separately:
+A mobilalkalmazás önállóan is indítható:
 
 ```sh
 yarn workspace mobile start
 ```
 
-### 7. Open the web dashboard
+### 7. A webes dashboard megnyitása
 
-Open the web UI:
+Nyisd meg a webes felületet:
 
 - http://localhost:5173
 
-Login rules:
+Bejelentkezési szabályok:
 
-- You can only sign in with an email that ends with `@petrik.hu`.
-- Even then, the user must be present in the database `users` table (whitelist). If the email is not in the DB, the API will deny login (HTTP 403).
+- Csak `@petrik.hu` végű e-mail-cím használható a bejelentkezéshez.
+- Ezen felül a felhasználónak szerepelnie kell az adatbázis `users` táblájában (engedélyezőlista). Ha az e-mail-cím nem található az adatbázisban, az API megtagadja a bejelentkezést (HTTP 403).
 
-Demo accounts (dev only):
+Demo fiókok (csak fejlesztői környezetben):
 
-- `bogyo@petrik.hu` / `Kortefa123` (admin)
-- `mez@petrik.hu` / `Almafa123` (worker)
+- `bogyo@petrik.hu` / `Kortefa123` (adminisztrátor)
+- `mez@petrik.hu` / `Almafa123` (alkalmazott)
 
 
 
-## Azure AD setup
+## Azure AD konfiguráció
 
-Both the web and mobile apps support Azure AD authentication. To enable it:
+Mind a webes, mind a mobilalkalmazás támogatja az Azure AD hitelesítést. Az engedélyezéshez:
 
-1. Register an application in the [Azure Portal](https://portal.azure.com/) → **App registrations**
-2. Set **Supported account types** to *Single tenant* (or as needed)
-3. Add **Redirect URIs**:
-   - Web: `http://localhost:5173` (dev) and your production URL
-   - Mobile: the Expo auth session redirect URI
-4. Copy the **Application (client) ID** and **Directory (tenant) ID** into the respective `.env` files (`VITE_AZURE_CLIENT_ID`, `VITE_AZURE_TENANT_ID` for web)
+1. Regisztrálj egy alkalmazást az [Azure Portalon](https://portal.azure.com/) → **Alkalmazásregisztrációk** menüpontban
+2. Állítsd be a **Támogatott fióktípusokat**: *Egybérlős* (vagy igény szerint)
+3. Add meg az **Átirányítási URI-kat**:
+   - Web: `http://localhost:5173` (fejlesztés) és az éles környezet URL-je
+   - Mobile: az Expo auth session átirányítási URI-ja
+4. Másold az **Alkalmazás (kliens) azonosítóját** és a **Könyvtár (bérlő) azonosítóját** a megfelelő `.env` fájlokba (`VITE_AZURE_CLIENT_ID`, `VITE_AZURE_TENANT_ID` a web esetén)
 
-## Scripts reference
+## Parancsok referenciája
 
-All commands are run from the monorepo root:
+Minden parancs a monorepo gyökérkönyvtárából futtatandó:
 
-| Command | Description |
+| Parancs | Leírás |
 |---|---|
-| `yarn dev` | Start API + web in development mode |
-| `yarn build` | Build all apps |
-| `yarn lint` | Lint all apps |
-| `yarn format` | Format all `.ts`, `.tsx`, `.md` files with Prettier |
-| `yarn check-types` | Type-check all TypeScript projects |
-| `yarn workspace mobile start` | Start Expo dev server for mobile |
-| `yarn workspace backend test` | Run API tests (Jest) |
+| `yarn dev` | API + web indítása fejlesztői módban |
+| `yarn build` | Összes alkalmazás buildelése |
+| `yarn lint` | Összes alkalmazás lintolása |
+| `yarn format` | Összes `.ts`, `.tsx`, `.md` fájl formázása Prettierrel |
+| `yarn check-types` | Összes TypeScript projekt típusellenőrzése |
+| `yarn workspace mobile start` | Expo fejlesztői szerver indítása a mobilhoz |
+| `yarn workspace backend test` | API tesztek futtatása (Jest) |
 
-## Testing
+## Tesztelés
 
-The API has a Jest test suite with mocked database connections — no running MySQL instance is needed for tests:
+Az API Jest tesztcsomaggal rendelkezik, amelynek adatbázis-kapcsolatai mock-olva vannak — a tesztek futtatásához nincs szükség működő MySQL példányra:
 
 ```sh
 yarn workspace backend test
 ```
 
-## Mobile builds
+## Mobilos buildek
 
-Builds are handled by [EAS Build](https://docs.expo.dev/build/introduction/) (Expo Application Services):
+A buildeket az [EAS Build](https://docs.expo.dev/build/introduction/) kezeli (Expo Application Services):
 
 ```sh
-# Preview build (both platforms)
+# Preview build (mindkét platform)
 yarn workspace mobile build:all
 
-# Android only
+# Csak Android
 yarn workspace mobile build:android
 
-# iOS only
+# Csak iOS
 yarn workspace mobile build:ios
 ```
 
 ## CI/CD
 
-GitHub Actions workflows in `.github/workflows/`:
+GitHub Actions workflow-ok a `.github/workflows/` könyvtárban:
 
-| Workflow | Trigger | What it does |
+| Workflow | Esemény | Feladat |
 |---|---|---|
-| `ci.yml` | Push / PR | Runs linting and tests |
-| `deploy-api.yml` | Push to `main` (api changes) | Runs tests, deploys API to Render |
-| `deploy-web.yml` | Push to `main` (web changes) | Deploys web dashboard |
-| `release-drafter.yml` | Push to `main` / `dev` | Builds iOS & Android via EAS, attaches APK/IPA to GitHub release; `dev` pushes create a rolling `nightly` pre-release |
-| `mobile.yml` | Mobile changes | Builds mobile app via EAS |
+| `ci.yml` | Push / PR | Lintolás és tesztek futtatása |
+| `deploy-api.yml` | Push `main` ágra (API módosítások) | Tesztek futtatása, API deploy Renderre |
+| `deploy-web.yml` | Push `main` ágra (webes módosítások) | Webes dashboard deployolása |
+| `release-drafter.yml` | Push `main` / `dev` ágra | iOS és Android build EAS-en keresztül, APK/IPA csatolása a GitHub release-hez; `dev` ágra való push `nightly` pre-release-t hoz létre |
+| `mobile.yml` | Mobilos módosítások | Mobilalkalmazás buildelése EAS-en keresztül |
 
-## Deployment
+## Éles telepítés
 
-The API is deployed on [Render](https://render.com) (free tier). Environment variables (`DB_HOST`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `JWT_SECRET`, `CORS_ORIGINS`) are configured in the Render dashboard — there is no `render.yaml` in this repo.
+Az API a [Render](https://render.com) platformon fut (ingyenes csomag). A környezeti változók (`DB_HOST`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `JWT_SECRET`, `CORS_ORIGINS`) a Render dashboardon konfigurálhatók — a repóban nincs `render.yaml` fájl.
 
-> **Note:** Render's free tier spins down after inactivity. The mobile app handles cold starts automatically with a 90-second timeout and retry logic.
+> **Megjegyzés:** A Render ingyenes csomagja inaktivitás után leáll. A mobilalkalmazás automatikusan kezeli a cold startokat: 90 másodperces időtúllépéssel és újrapróbálkozási logikával.
 
-## Project structure
+## Projektstruktúra
 
 ```
 depo/
 ├── apps/
 │   ├── api/              # Express REST API (Node.js)
-│   ├── mobile/           # Expo React Native app
-│   └── web/              # React + Vite web dashboard
+│   ├── mobile/           # Expo React Native alkalmazás
+│   └── web/              # React + Vite webes dashboard
 ├── packages/
-│   ├── ui/               # Shared Tamagui components
-│   ├── eslint-config/    # Shared ESLint configs
-│   └── typescript-config/ # Shared tsconfig bases
-├── turbo.json            # Turborepo task pipeline
-└── package.json          # Root workspace config (Yarn 4)
+│   ├── ui/               # Megosztott Tamagui komponensek
+│   ├── eslint-config/    # Megosztott ESLint konfigurációk
+│   └── typescript-config/ # Megosztott tsconfig alapok
+├── turbo.json            # Turborepo feladatfolyamat
+└── package.json          # Gyökér workspace konfiguráció (Yarn 4)
 ```
 
-## Troubleshooting
+## Hibaelhárítás
 
-| Problem | Solution |
+| Probléma | Megoldás |
 |---|---|
-| `corepack enable` fails | Run in an elevated terminal (Admin / `sudo`) |
-| API exits with "JWT_SECRET is required" | Add `JWT_SECRET` to `apps/api/.env` |
-| `ER_ACCESS_DENIED_ERROR` from MySQL | Verify `DB_USER` and `DB_PASSWORD` in `apps/api/.env` |
-| API takes 30-90s to respond on first request | Render free tier cold start — the mobile app retries automatically |
-| `yarn install` fails with "Invalid authentication" | Run `corepack enable` first, or delete `.yarn/install-state.gz` and retry |
+| `corepack enable` sikertelen | Futtasd emelt szintű terminálban (Rendszergazda / `sudo`) |
+| Az API „JWT_SECRET is required" hibával leáll | Add hozzá a `JWT_SECRET` változót az `apps/api/.env` fájlhoz |
+| `ER_ACCESS_DENIED_ERROR` MySQL-től | Ellenőrizd a `DB_USER` és `DB_PASSWORD` értékeket az `apps/api/.env` fájlban |
+| Az API 30–90 másodpercet vesz igénybe az első kérésre | Render ingyenes csomag cold start — a mobilalkalmazás automatikusan újrapróbálkozik |
+| `yarn install` „Invalid authentication" hibával sikertelen | Futtasd előbb a `corepack enable` parancsot, vagy töröld a `.yarn/install-state.gz` fájlt és próbáld újra |
 
-## Contributing
+## Közreműködés
 
-See [CONTRIBUTING.md](.github/CONTRIBUTING.md) for guidelines.
+Az irányelvekért lásd a [CONTRIBUTING.md](.github/CONTRIBUTING.md) fájlt.
 
-## Security
+## Biztonság
 
-To report a vulnerability, see [SECURITY.md](.github/SECURITY.md).
+Biztonsági rés bejelentéséhez lásd a [SECURITY.md](.github/SECURITY.md) fájlt.
 
-## License
+## Licenc
 
 ISC

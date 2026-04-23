@@ -15,7 +15,7 @@ export type StorageKey = (typeof STORAGE_KEYS)[keyof typeof STORAGE_KEYS];
 
 // Default to Render API, allow EXPO_PUBLIC_API_URL override at build time
 const DEFAULT_API_URL =
-  process.env.EXPO_PUBLIC_API_URL ?? 'https://depo-tj5n.onrender.com';
+  process.env.EXPO_PUBLIC_API_URL ?? 'https://depo.htibee.hu/api';
 
 function normalizeApiBaseUrl(url: string): string {
   return url.trim().replace(/\/+$/, '');
