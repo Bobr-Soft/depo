@@ -69,6 +69,7 @@ export default function RootLayout() {
         screenOptions={headerStyles}
       >
         <Stack.Screen name="login" options={{ headerShown: false }} />
+        <Stack.Screen name="redirect" options={{ headerShown: false }} />
         <Stack.Screen name="(tabs)" options={{ headerShown: false, title: "Főoldal" }} />
         <Stack.Screen
           name="inbound"
